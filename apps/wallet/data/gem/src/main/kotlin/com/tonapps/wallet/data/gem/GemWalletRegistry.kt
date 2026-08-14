@@ -36,7 +36,7 @@ class GemWalletRegistry internal constructor(
 	@Synchronized
 	fun delete(walletId: WalletId) {
 		val registry = read()
-		val wallets = registry.wallets.filterNot { it.walletId == walletId }
+		val wallets = registry.wallets.filterNot { it.walletId == walletId.value }
 		if (wallets.size == registry.wallets.size) {
 			return
 		}

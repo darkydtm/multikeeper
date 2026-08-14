@@ -49,7 +49,7 @@ class GemstoneAlienProvider(
 				response
 			}
 			retriedResponse.use { response ->
-				AlienResponse(response.code.toUShort(), response.body?.bytes().orEmpty())
+				AlienResponse(response.code.toUShort(), response.body?.bytes() ?: ByteArray(0))
 			}
 		} catch (error: CancellationException) {
 			throw error

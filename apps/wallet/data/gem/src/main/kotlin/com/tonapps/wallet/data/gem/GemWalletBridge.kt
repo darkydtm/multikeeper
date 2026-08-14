@@ -76,14 +76,6 @@ class GemWalletBridge(
 		}
 	}
 
-	private fun Chain.toGemChain(): uniffi.gemstone.Chain = when (this) {
-		Chain.Bitcoin -> GEM_BITCOIN
-		Chain.Ethereum -> GEM_ETHEREUM
-		Chain.SmartChain -> GEM_SMART_CHAIN
-		Chain.Solana -> GEM_SOLANA
-		else -> throw IllegalArgumentException("Unsupported Gemstone chain: ${key}")
-	}
-
 	private fun GemKeystoreAccount.toChainAccount(walletId: String): ChainAccount = ChainAccount(
 		walletId = WalletId(walletId),
 		chain = chain.toChain(),
@@ -93,10 +85,10 @@ class GemWalletBridge(
 	)
 
 	private fun uniffi.gemstone.Chain.toChain(): Chain = when (this) {
-		GEM_BITCOIN -> Chain.Bitcoin
-		GEM_ETHEREUM -> Chain.Ethereum
-		GEM_SMART_CHAIN -> Chain.SmartChain
-		GEM_SOLANA -> Chain.Solana
+		"bitcoin" -> Chain.Bitcoin
+		"ethereum" -> Chain.Ethereum
+		"smartchain" -> Chain.SmartChain
+		"solana" -> Chain.Solana
 		else -> throw IllegalArgumentException("Unsupported Gemstone chain: $this")
 	}
 
@@ -107,10 +99,6 @@ class GemWalletBridge(
 	)
 
 	private companion object {
-		const val GEM_BITCOIN: uniffi.gemstone.Chain = "bitcoin"
-		const val GEM_ETHEREUM: uniffi.gemstone.Chain = "ethereum"
-		const val GEM_SMART_CHAIN: uniffi.gemstone.Chain = "smartchain"
-		const val GEM_SOLANA: uniffi.gemstone.Chain = "solana"
 		val supportedGemChains = listOf(
 			Chain.Bitcoin.toGemChain(),
 			Chain.Ethereum.toGemChain(),
@@ -118,6 +106,14 @@ class GemWalletBridge(
 			Chain.Solana.toGemChain(),
 		)
 	}
+}
+
+private fun Chain.toGemChain(): uniffi.gemstone.Chain = when (this) {
+	Chain.Bitcoin -> "bitcoin"
+	Chain.Ethereum -> "ethereum"
+	Chain.SmartChain -> "smartchain"
+	Chain.Solana -> "solana"
+	else -> throw IllegalArgumentException("Unsupported Gemstone chain: ${key}")
 }
 
 class MnemonicHandle internal constructor(

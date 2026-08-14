@@ -211,19 +211,24 @@ class GemWalletDataSource(
 			return Result.failure(WalletDataSourceException(GemError.InvalidInput("Unsupported Gem chain: ${chain.key}")))
 		}
 		return try {
-			block().getOrElse { error ->
-				if (error is CancellationException) {
-					throw error
-				}
-				throw WalletDataSourceException(
-					when (error) {
-						is WalletDataSourceException -> error.error
-						is GemBackendException -> error.gemError
-						is IllegalArgumentException -> GemError.InvalidInput(error.message ?: "Invalid Gem input")
-						else -> GemError.NetworkUnavailable(error)
-					},
-				)
-			}
+			block().fold(
+				onSuccess = { Result.success(it) },
+				onFailure = { error ->
+					if (error is CancellationException) {
+						throw error
+					}
+					Result.failure<T>(
+						WalletDataSourceException(
+							when (error) {
+								is WalletDataSourceException -> error.error
+								is GemBackendException -> error.gemError
+								is IllegalArgumentException -> GemError.InvalidInput(error.message ?: "Invalid Gem input")
+								else -> GemError.NetworkUnavailable(error)
+							},
+						),
+					)
+				},
+			)
 		} catch (error: IllegalArgumentException) {
 			Result.failure(WalletDataSourceException(GemError.InvalidInput(error.message ?: "Invalid Gem input")))
 		} catch (error: WalletDataSourceException) {

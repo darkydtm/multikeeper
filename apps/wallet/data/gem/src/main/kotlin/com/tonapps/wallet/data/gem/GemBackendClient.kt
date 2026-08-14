@@ -63,17 +63,17 @@ class GemBackendClient(
 
 	override suspend fun getAssets(walletId: WalletId, fromTimestamp: Long): Result<List<String>> = execute<List<String>, List<String>>(
 		walletRequest(walletId, "GET") {
-			url(url("/v2/devices/assets", "from_timestamp" to fromTimestamp.toString()))
+			url(this@GemBackendClient.url("/v2/devices/assets", "from_timestamp" to fromTimestamp.toString()))
 		},
 	) { it }
 
 	override suspend fun getTransactions(
 		walletId: WalletId,
 		fromTimestamp: Long,
-		assetId: String? = null,
+		assetId: String?,
 	): Result<GemTransactionsResponse?> = execute<TransactionsResponse?, GemTransactionsResponse?>(
 		walletRequest(walletId, "GET") {
-			url(url(
+			url(this@GemBackendClient.url(
 				"/v2/devices/transactions",
 				"from_timestamp" to fromTimestamp.toString(),
 				*assetId?.let { arrayOf("asset_id" to it) }.orEmpty(),
@@ -97,7 +97,7 @@ class GemBackendClient(
 
 	suspend fun getWalletConfiguration(walletId: WalletId): Result<GemWalletConfigurationResult> = execute<WalletConfigurationResult, GemWalletConfigurationResult>(
 		walletRequest(walletId, "GET") {
-			url(url("/v2/devices/wallet_configuration"))
+			url(this@GemBackendClient.url("/v2/devices/wallet_configuration"))
 		},
 	) { it.toModel() }
 
@@ -125,11 +125,12 @@ class GemBackendClient(
 		.method(method, null)
 		.tag(GemWalletId::class.java, GemWalletId(walletId.value))
 		.block()
+		.build()
 
 	private suspend inline fun <reified T, R> execute(
 		request: Request,
-		notFound: (() -> R)? = null,
-		map: (T) -> R,
+		noinline notFound: (() -> R)? = null,
+		crossinline map: (T) -> R,
 	): Result<R> = withContext(Dispatchers.IO) {
 		try {
 			signedClient.newCall(request).execute().use { response ->
@@ -203,7 +204,7 @@ private fun Device.toModel() = GemDevice(
 	subscriptionsVersion = subscriptionsVersion,
 )
 
-private fun GemWalletSubscription.toDto() = WalletSubscription(
+private fun GemWalletSubscription.toDto() = WalletSubscriptionDto(
 	walletId = walletId,
 	source = source,
 	subscriptions = subscriptions.map { AddressChains(it.address, it.chains) },
@@ -211,7 +212,7 @@ private fun GemWalletSubscription.toDto() = WalletSubscription(
 
 private fun GemWalletSubscriptionChains.toDto() = WalletSubscriptionChains(walletId, chains)
 
-private fun WalletSubscription.toModel() = GemWalletSubscription(
+private fun WalletSubscriptionDto.toModel() = GemWalletSubscription(
 	walletId = walletId,
 	source = source,
 	subscriptions = subscriptions.map { GemAddressChains(it.address, it.chains) },

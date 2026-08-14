@@ -38,7 +38,7 @@ private class SecurityGemDeviceKeyStorage(
 	}
 }
 
-class GemDeviceIdentity private constructor(
+class GemDeviceIdentity internal constructor(
 	private val storage: GemDeviceKeyStorage,
 	private val crypto: GemDeviceCrypto,
 ) : GemDeviceIdentityProvider {
@@ -46,11 +46,6 @@ class GemDeviceIdentity private constructor(
 		storage: SecurityStorageBox,
 		crypto: GemDeviceCrypto = UniffiGemDeviceCrypto,
 	) : this(SecurityGemDeviceKeyStorage(storage), crypto)
-
-	internal constructor(
-		storage: GemDeviceKeyStorage,
-		crypto: GemDeviceCrypto,
-	) : this(storage, crypto)
 
 	@Synchronized
 	override fun getDeviceId(): String {

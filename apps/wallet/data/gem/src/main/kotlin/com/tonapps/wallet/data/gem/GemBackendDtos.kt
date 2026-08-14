@@ -33,7 +33,7 @@ internal data class AddressChains(
 )
 
 @Serializable
-internal data class WalletSubscription(
+internal data class WalletSubscriptionDto(
 	val walletId: String,
 	val source: String? = null,
 	val subscriptions: List<AddressChains>,
