@@ -27,7 +27,7 @@ val cargoNdkTargets = (System.getenv("GEMSTONE_ANDROID_ABIS") ?: defaultCargoNdk
 
 android {
     namespace = "com.gemwallet.gemstone"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 28
