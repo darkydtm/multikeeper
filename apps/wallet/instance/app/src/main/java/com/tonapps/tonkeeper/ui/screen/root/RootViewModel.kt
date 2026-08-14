@@ -110,6 +110,7 @@ import com.tonapps.wallet.data.core.entity.SignRequestEntity
 import com.tonapps.wallet.data.dapps.DAppsRepository
 import com.tonapps.wallet.data.dapps.entities.AppConnectEntity
 import com.tonapps.wallet.data.dapps.entities.AppEntity
+import com.tonapps.wallet.data.gem.GemRuntimeCoordinator
 import com.tonapps.wallet.data.passcode.LockScreen
 import com.tonapps.wallet.data.passcode.PasscodeManager
 import com.tonapps.wallet.data.purchase.PurchaseRepository
@@ -144,6 +145,7 @@ class RootViewModel(
     private val historyHelper: HistoryHelper,
     private val purchaseRepository: PurchaseRepository,
     private val tonConnectBridge: ITonConnectBridge,
+    private val gemRuntimeCoordinator: GemRuntimeCoordinator,
     private val browserRepository: BrowserRepository,
     private val pushManager: PushManager,
     private val tokenRepository: TokenRepository,
@@ -230,7 +232,9 @@ class RootViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val firebaseToken = FirebasePush.requestToken()
             settingsRepository.firebaseToken = firebaseToken
-            ratesRepository.updateAll(TonNetwork.MAINNET, settingsRepository.currency)
+            if (accountRepository.getSelectedWallet()?.isGem != true) {
+                ratesRepository.updateAll(TonNetwork.MAINNET, settingsRepository.currency)
+            }
             if (firebaseToken.isNullOrBlank()) {
                 L.e("TonkeeperFirebasePush", "Failed to get Firebase push token")
             } else {
@@ -644,6 +648,10 @@ class RootViewModel(
     private suspend fun initShortcuts(
         currentWallet: WalletEntity
     ) = withContext(Dispatchers.IO) {
+        if (currentWallet.isGem) {
+            ShortcutManagerCompat.removeAllDynamicShortcuts(context)
+            return@withContext
+        }
         val wallets = accountRepository.getWallets()
         val list = mutableListOf<ShortcutInfoCompat>()
         if (!currentWallet.testnet) {
@@ -693,6 +701,7 @@ class RootViewModel(
 
     fun signOut() {
         viewModelScope.launch {
+            gemRuntimeCoordinator.deleteAllWallets()
             accountRepository.logout()
         }
     }
@@ -807,7 +816,8 @@ class RootViewModel(
                 } else if (state is AccountRepository.SelectedState.Wallet) {
                     processDeepLink(state.wallet, deeplink, fromPackageName)
                 }
-            }.launch()
+            }
+                .launch()
         return true
     }
 
@@ -830,6 +840,9 @@ class RootViewModel(
     ) {
         val route = deeplink.route
         L.d("processDeepLink route: $route")
+        if (wallet.isGem && route.isTonOnly()) {
+            return
+        }
         if (route is DeepLinkRoute.DnsRenew) {
             openScreen(DNSRenewScreen.newInstance(wallet, emptyList()))
         } else if (route is DeepLinkRoute.TonConnect) {
@@ -1023,6 +1036,7 @@ class RootViewModel(
     }
 
     private suspend fun openBattery(wallet: WalletEntity, route: DeepLinkRoute.Battery) {
+        if (wallet.isGem) return
         val promoCode = route.promocode
         if (promoCode.isNullOrEmpty()) {
             openScreen(BatteryScreen.newInstance(wallet, from = "deeplink", jetton = route.jetton))
@@ -1062,6 +1076,7 @@ class RootViewModel(
         deepLink: DeepLink,
         route: DeepLinkRoute.Transfer
     ) {
+        if (wallet.isGem) return
         if (route.isExpired) {
             toast(Localization.expired_link)
             return
@@ -1088,6 +1103,22 @@ class RootViewModel(
                 source = deepLink.source,
             )
         )
+    }
+
+    private fun DeepLinkRoute.isTonOnly(): Boolean = when (this) {
+        is DeepLinkRoute.DnsRenew,
+        is DeepLinkRoute.TonConnect,
+        is DeepLinkRoute.Send,
+        is DeepLinkRoute.Staking,
+        is DeepLinkRoute.StakingPool,
+        is DeepLinkRoute.AccountEvent,
+        is DeepLinkRoute.Transfer,
+        is DeepLinkRoute.Swap,
+        is DeepLinkRoute.Battery,
+        is DeepLinkRoute.DApp,
+        is DeepLinkRoute.Jetton -> true
+        is DeepLinkRoute.Tabs.Trading -> true
+        else -> false
     }
 
     fun processSignerDeepLink(route: DeepLinkRoute.Signer, fromQR: Boolean) {

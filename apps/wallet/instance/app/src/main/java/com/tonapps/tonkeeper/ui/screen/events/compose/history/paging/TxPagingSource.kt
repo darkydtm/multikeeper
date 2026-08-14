@@ -16,7 +16,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import ui.components.events.UiEvent
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 
 internal class TxPagingSource(
     private val wallet: WalletEntity,
@@ -37,6 +36,9 @@ internal class TxPagingSource(
     override suspend fun load(
         params: LoadParams<Timestamp>
     ): LoadResult<Timestamp, UiEvent.Item> = withContext(Dispatchers.IO) {
+        if (wallet.isGem) {
+            return@withContext LoadResult.Page(emptyList(), null, null)
+        }
         try {
             val beforeTimestamp = params.key
             val data = if (params is LoadParams.Refresh && beforeTimestamp == null) {

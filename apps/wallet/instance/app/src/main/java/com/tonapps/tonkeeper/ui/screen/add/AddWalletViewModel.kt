@@ -20,10 +20,12 @@ class AddWalletViewModel(
         if (withNew) {
             uiItems.add(Item.header(Localization.add_wallet, Localization.add_wallet_description))
             uiItems.add(Item.new)
+			uiItems.add(Item.gemNew)
         } else {
             uiItems.add(Item.header(Localization.import_wallet, Localization.import_wallet_subtitle))
         }
         uiItems.add(Item.import)
+		uiItems.add(Item.gemImport)
         if (!api.getConfig(TonNetwork.MAINNET).flags.disableSigner) {
             uiItems.add(Item.signer)
         }

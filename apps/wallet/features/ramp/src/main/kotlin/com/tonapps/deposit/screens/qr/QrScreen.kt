@@ -131,6 +131,7 @@ fun QrScreen(
                     when (data.token.blockchain) {
                         Blockchain.TON -> UIKitIcon.ic_ton
                         Blockchain.TRON -> UIKitIcon.ic_tron
+                        Blockchain.GEM -> UIKitIcon.ic_wallet_28
                     }
                 }
 

@@ -116,6 +116,7 @@ class QrAssetFeature(
         val address = when (token.blockchain) {
             Blockchain.TON -> wallet.address
             Blockchain.TRON -> accountRepository.getTronAddress(wallet.id)!!
+            Blockchain.GEM -> wallet.address
         }
         val qrContent = getQrContent(address, token, wallet)
         val isBatteryEnabled = !api.getConfig(wallet.network).flags.disableBattery
@@ -222,6 +223,7 @@ class QrAssetFeature(
         val activeAddress = when (token.blockchain) {
             Blockchain.TON -> wallet.address
             Blockchain.TRON -> accountRepository.getTronAddress(wallet.id)!!
+            Blockchain.GEM -> wallet.address
         }
 
         val qrContent = getQrContent(activeAddress, token, wallet)

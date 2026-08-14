@@ -29,7 +29,6 @@ import com.tonapps.uikit.color.accentGreenColor
 import com.tonapps.uikit.color.accentRedColor
 import com.tonapps.uikit.color.backgroundContentTintColor
 import com.tonapps.uikit.color.textSecondaryColor
-import com.tonapps.blockchain.model.legacy.Wallet
 import com.tonapps.blockchain.model.legacy.WalletType
 import com.tonapps.wallet.localization.Localization
 import ui.ComposeIcon
@@ -190,6 +189,7 @@ fun Context.getWalletBadges(
             WalletType.Ledger -> Localization.ledger
             WalletType.Keystone -> Localization.keystone
             WalletType.Tetra -> Localization.tetra
+            WalletType.Gem -> Localization.wallet
             else -> throw IllegalArgumentException("Unknown wallet type: $type")
         }
         builder = builder.badgeDefault(this, resId)

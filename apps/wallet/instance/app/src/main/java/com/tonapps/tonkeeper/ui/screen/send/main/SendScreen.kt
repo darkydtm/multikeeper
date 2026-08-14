@@ -278,6 +278,11 @@ class SendScreen(wallet: WalletEntity) : WalletContextScreen(R.layout.fragment_s
 
         convertedContainerView = view.findViewById(R.id.converted_container)
 
+        if (wallet.isGem) {
+            swapView.visibility = View.GONE
+            convertedContainerView.visibility = View.GONE
+        }
+
         if (args.isNft) {
             amountView.visibility = View.GONE
             convertedContainerView.visibility = View.GONE
@@ -397,15 +402,15 @@ class SendScreen(wallet: WalletEntity) : WalletContextScreen(R.layout.fragment_s
     }
 
     private fun applyTokenError(error: SendDestination.TokenError) {
-        val addressBlockchainRes = if (error.addressBlockchain == Blockchain.TON) {
-            Localization.ton
-        } else {
-            Localization.tron
+        val addressBlockchainRes = when (error.addressBlockchain) {
+            Blockchain.TON -> Localization.ton
+            Blockchain.TRON -> Localization.tron
+            Blockchain.GEM -> Localization.wallet
         }
-        val selectedBlockchainRes = if (error.selectedToken.blockchain == Blockchain.TON) {
-            Localization.ton
-        } else {
-            Localization.tron
+        val selectedBlockchainRes = when (error.selectedToken.blockchain) {
+            Blockchain.TON -> Localization.ton
+            Blockchain.TRON -> Localization.tron
+            Blockchain.GEM -> Localization.wallet
         }
 
         val errorText = getString(
@@ -505,7 +510,7 @@ class SendScreen(wallet: WalletEntity) : WalletContextScreen(R.layout.fragment_s
 
         if (targetAddress != null) {
             lifecycleScope.launch(Dispatchers.Main) {
-                if (viewModel.isNeedMemoAddress(targetAddress) || targetAddress.isValidTronAddress()) {
+                if (wallet.isGem || viewModel.isNeedMemoAddress(targetAddress) || targetAddress.isValidTronAddress()) {
                     showReviewState()
                     commentInput.focus()
                 } else if (type == Type.Direct && amount.isPositive()) {
@@ -752,6 +757,12 @@ class SendScreen(wallet: WalletEntity) : WalletContextScreen(R.layout.fragment_s
             }
 
             reviewRecipientAddressView.visibility = View.GONE
+        } else if (destination is SendDestination.GemAccount) {
+            reviewRecipientView.value = destination.address
+            reviewRecipientView.setHapticClickListener {
+                requireContext().copyToClipboard(destination.address)
+            }
+            reviewRecipientAddressView.visibility = View.GONE
         }
     }
 
@@ -802,7 +813,11 @@ class SendScreen(wallet: WalletEntity) : WalletContextScreen(R.layout.fragment_s
                         reviewRecipientFeeView.value =
                             "≈ ${event.format}".withCustomSymbol(requireContext())
                         reviewRecipientFeeView.description =
-                            "≈ ${event.convertedFormat}".withCustomSymbol(requireContext())
+                            if (event.convertedFormat.isNotBlank()) {
+                                "≈ ${event.convertedFormat}".withCustomSymbol(requireContext())
+                            } else {
+                                ""
+                            }
                     }
                 }
 
@@ -890,9 +905,10 @@ class SendScreen(wallet: WalletEntity) : WalletContextScreen(R.layout.fragment_s
         reviewIconView.setImageURI(token.imageUri, null)
 
         collectFlow(viewModel.tronAvailableFlow.take(1)) { isTronAvailable ->
-            if (isTronAvailable && (token.isUsdt || token.isUsdtTrc20)) {
+            if ((isTronAvailable && (token.isUsdt || token.isUsdtTrc20)) || wallet.isGem) {
                 val networkTextRes = when (token.blockchain) {
                     Blockchain.TRON -> Localization.trc20
+                    Blockchain.GEM -> Localization.ton
                     else -> Localization.ton
                 }
                 val tokenText = token.symbol.plus(" ").plus(getString(networkTextRes))
@@ -900,6 +916,7 @@ class SendScreen(wallet: WalletEntity) : WalletContextScreen(R.layout.fragment_s
 
                 val networkIconRes = when (token.blockchain) {
                     Blockchain.TRON -> R.drawable.ic_tron // TODO replace with webp
+                    Blockchain.GEM -> UIKitIcon.ic_wallet_28
                     else -> UIKitIcon.ic_ton
                 }
                 reviewNetworkIconView.setLocalRes(networkIconRes)
@@ -965,7 +982,11 @@ class SendScreen(wallet: WalletEntity) : WalletContextScreen(R.layout.fragment_s
                             "≈ $formattedFiat ($formattedAmount)"
                         }
                     feeMethodSelector.addItem(
-                        id = fee.amount.token.symbol.hashCode().toLong(),
+                        id = if (fee is SendFee.Gem) {
+                            "gem:${fee.index}".hashCode().toLong()
+                        } else {
+                            fee.amount.token.symbol.hashCode().toLong()
+                        },
                         title = fee.amount.token.symbol,
                         subtitle = subtitle,
                         imageUri = fee.amount.token.imageUri,

@@ -151,6 +151,7 @@ class AccountRepository(
     }
 
     private suspend fun addWalletToRN(wallet: WalletEntity) {
+        if (wallet.isGem) return
         val type = when (wallet.type) {
             WalletType.Default -> RNWallet.Type.Regular
             WalletType.Watch -> RNWallet.Type.WatchOnly
@@ -216,6 +217,9 @@ class AccountRepository(
 
     suspend fun requestTonProofToken(wallet: WalletEntity): String? = withContext(scope.coroutineContext) {
         try {
+            if (wallet.isGem) {
+                return@withContext null
+            }
             if (keyguardManager.isDeviceLocked) {
                 return@withContext null
             }
@@ -445,6 +449,19 @@ class AccountRepository(
         }
     }
 
+    suspend fun addGemWallet(wallet: WalletEntity) = withContext(scope.coroutineContext) {
+        check(wallet.isGem) { "Expected a Gem wallet" }
+        database.replaceAccount(wallet)
+        setSelectedWallet(wallet.id)
+    }
+
+    suspend fun deleteGemWallet(id: String) = withContext(scope.coroutineContext) {
+        val wallet = database.getAccount(id) ?: return@withContext
+        check(wallet.isGem) { "Expected a Gem wallet" }
+        database.deleteAccount(id)
+        setSelectedWallet(database.getFirstAccountId())
+    }
+
     private suspend fun createTonProofToken(wallet: WalletEntity): String? {
         val payload = api.tonconnectPayload() ?: return null
         return try {
@@ -481,7 +498,9 @@ class AccountRepository(
             setSelectedWallet(null)
         } else {
             _selectedStateFlow.value = SelectedState.Wallet(entity)
-            rnLegacy.setSelectedWallet(id)
+            if (!entity.isGem) {
+                rnLegacy.setSelectedWallet(id)
+            }
         }
     }
 

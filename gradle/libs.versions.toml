@@ -286,6 +286,8 @@ leakcanary = { module = "com.squareup.leakcanary:leakcanary-android", version.re
 
 [plugins]
 # Android
+android-plugin = { id = "com.android.application", version.ref = "android-plugin" }
+android-library = { id = "com.android.library", version.ref = "android-plugin" }
 android-test = { id = "com.android.test", version.ref = "android-plugin" }
 android-baselineprofile = { id = "androidx.baselineprofile", version.ref = "baselineprofile" }
 

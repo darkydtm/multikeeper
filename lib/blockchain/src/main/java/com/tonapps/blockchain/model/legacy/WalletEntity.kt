@@ -24,6 +24,7 @@ import org.ton.api.pub.PublicKeyEd25519
 import org.ton.cell.Cell
 import org.ton.contract.wallet.WalletTransfer
 
+@Suppress("ClassOrdering")
 data class WalletEntity(
     val id: String,
     val publicKey: PublicKeyEd25519,
@@ -33,6 +34,8 @@ data class WalletEntity(
     val ledger: Ledger? = null,
     val keystone: Keystone? = null,
     val initialized: Boolean,
+    val accounts: List<WalletAccount> = emptyList(),
+    val keystoreId: String? = null,
 ): Parcelable {
 
     companion object {
@@ -76,7 +79,7 @@ data class WalletEntity(
     }
 
     val maxMessages: Int
-        get() = if (type == WalletType.Ledger) 1 else contract.maxMessages
+        get() = if (type == WalletType.Ledger) 1 else if (isGem) 0 else contract.maxMessages
 
     val testnet: Boolean
         get() = type == WalletType.Testnet
@@ -97,16 +100,21 @@ data class WalletEntity(
     val hasPrivateKey: Boolean
         get() = type == WalletType.Default || type == WalletType.Tetra || type == WalletType.Testnet || type == WalletType.Lockup
 
-    val accountId: String = contract.address.toAccountId()
+    val accountId: String
+        get() = if (isGem) id else contract.address.toAccountId()
 
-    val address: String = contract.address.toWalletAddress(testnet)
+    val address: String
+        get() = if (isGem) accounts.firstOrNull()?.address.orEmpty() else contract.address.toWalletAddress(testnet)
 
     val blockchainAddress: BlockchainAddress
         get() = BlockchainAddress(
             value = address,
             network = network,
-            blockchain = Blockchain.TON
+            blockchain = if (isGem) Blockchain.GEM else Blockchain.TON
         )
+
+    val isGem: Boolean
+        get() = type == WalletType.Gem
 
     val isWatchOnly: Boolean
         get() = type == WalletType.Watch
@@ -118,13 +126,13 @@ data class WalletEntity(
         get() = type == WalletType.Keystone
 
     val isW5: Boolean
-        get() = version == WalletVersion.V5BETA || version == WalletVersion.V5R1
+        get() = !isGem && (version == WalletVersion.V5BETA || version == WalletVersion.V5R1)
 
     val isExternal: Boolean
-        get() = signer || isLedger || isKeystone
+        get() = signer || isLedger || isKeystone || isGem
 
     val isTonConnectSupported: Boolean
-        get() = type != WalletType.Watch // !testnet &&
+        get() = type != WalletType.Watch && !isGem // !testnet &&
 
     constructor(parcel: Parcel) : this(
         id = parcel.readString()!!,
@@ -135,13 +143,23 @@ data class WalletEntity(
         ledger = parcel.readParcelableCompat(),
         keystone = parcel.readParcelableCompat(),
         initialized = parcel.readBooleanCompat(),
+        accounts = if (parcel.dataAvail() > 0) {
+            parcel.createTypedArrayList(WalletAccount.CREATOR).orEmpty()
+        } else {
+            emptyList()
+        },
+        keystoreId = parcel.readString(),
     )
 
     fun isMyAddress(address: String): Boolean {
+        if (isGem) {
+            return accounts.any { it.address.equals(address, ignoreCase = true) }
+        }
         return address.toRawAddress().equals(accountId, ignoreCase = true)
     }
 
     fun isSupportedFeature(feature: WalletFeature): Boolean {
+        if (isGem) return false
         return contract.isSupportedFeature(feature)
     }
 
@@ -181,9 +199,19 @@ data class WalletEntity(
         parcel.writeParcelable(ledger, flags)
         parcel.writeParcelable(keystone, flags)
         parcel.writeBooleanCompat(initialized)
+        parcel.writeTypedList(accounts)
+        parcel.writeString(keystoreId)
     }
 
     override fun describeContents(): Int {
         return 0
     }
 }
+
+@Parcelize
+data class WalletAccount(
+    val chain: String,
+    val address: String,
+    val publicKey: String? = null,
+    val derivationPath: String? = null,
+) : Parcelable

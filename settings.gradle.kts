@@ -35,6 +35,9 @@ buildCache {
 rootProject.name = "Tonkeeper"
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
+include(":gemstone")
+project(":gemstone").projectDir = file("gem-wallet/wallet/android/gemstone")
+
 include(
     ":apps:signer",
     ":baselineprofile:main",
@@ -75,6 +78,7 @@ include(
     ":apps:wallet:localization",
     ":apps:wallet:api",
     ":apps:wallet:data:core",
+    ":apps:wallet:data:gem",
     ":apps:wallet:data:legacy",
     ":apps:wallet:data:settings",
     ":apps:wallet:data:account",

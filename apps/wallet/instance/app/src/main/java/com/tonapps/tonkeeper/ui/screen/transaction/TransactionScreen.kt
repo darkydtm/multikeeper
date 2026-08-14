@@ -229,6 +229,7 @@ class TransactionScreen : BaseFragment(R.layout.dialog_transaction), BaseFragmen
             amountView.text = if (actionArgs.showNetwork) {
                 val networkRes = when (actionArgs.blockchain) {
                     Blockchain.TRON -> Localization.trc20
+                    Blockchain.GEM -> Localization.ton
                     else -> Localization.ton
                 }
                 actionArgs.valueFullFormatted.withCustomSymbol(requireContext())
@@ -313,6 +314,7 @@ class TransactionScreen : BaseFragment(R.layout.dialog_transaction), BaseFragmen
             if (actionArgs.showNetwork) {
                 val networkIconRes = when (actionArgs.blockchain) {
                     Blockchain.TRON -> R.drawable.ic_tron
+                    Blockchain.GEM -> UIKitIcon.ic_wallet_28
                     else -> UIKitIcon.ic_ton
                 }
                 networkIconView.setLocalRes(networkIconRes)
@@ -379,6 +381,7 @@ class TransactionScreen : BaseFragment(R.layout.dialog_transaction), BaseFragmen
             Blockchain.TON -> requireContext().serverConfig!!.transactionExplorer.format(actionArgs.txId)
 
             Blockchain.TRON -> "https://tronscan.org/#/transaction/${actionArgs.txId}"
+            Blockchain.GEM -> return
         }
         navigation?.openURL(url)
     }

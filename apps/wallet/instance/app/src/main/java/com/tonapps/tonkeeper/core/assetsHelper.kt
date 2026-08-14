@@ -6,6 +6,7 @@ import com.tonapps.legacy.enteties.AssetsEntity
 import com.tonapps.legacy.enteties.AssetsEntity.Token
 import com.tonapps.legacy.enteties.AssetsExtendedEntity
 import com.tonapps.blockchain.model.legacy.WalletEntity
+import com.tonapps.blockchain.contract.Blockchain
 import com.tonapps.wallet.data.settings.SettingsRepository
 import com.tonapps.wallet.data.settings.entities.TokenPrefsEntity
 
@@ -26,7 +27,7 @@ suspend fun List<AssetsEntity>.sort(
 
 fun List<AssetsEntity>.sumOfVerifiedFiat(): Coins {
     return sumOf {
-        if (it !is Token || it.token.verified) {
+        if (it !is Token || it.token.verified || it.blockchain == Blockchain.GEM) {
             it.fiat
         } else {
             Coins.ZERO

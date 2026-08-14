@@ -1,15 +1,18 @@
 package com.tonapps.tonkeeper.ui.screen.send.main
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.tonapps.blockchain.contract.Blockchain
 import com.tonapps.blockchain.model.legacy.Amount
+import com.tonapps.blockchain.model.legacy.BalanceEntity
 import com.tonapps.blockchain.model.legacy.Fee
 import com.tonapps.blockchain.model.legacy.TokenEntity
 import com.tonapps.blockchain.model.legacy.TransferEntity
 import com.tonapps.blockchain.model.legacy.WalletEntity
 import com.tonapps.blockchain.model.legacy.WalletType
+import com.tonapps.blockchain.model.legacy.TokenEntity.Verification
 import com.tonapps.blockchain.model.legacy.errors.InsufficientBalanceType
 import com.tonapps.blockchain.model.legacy.errors.isEmptyBalance
 import com.tonapps.blockchain.model.legacy.errors.isTON
@@ -22,7 +25,6 @@ import com.tonapps.blockchain.ton.extensions.isValidTonAddress
 import com.tonapps.blockchain.tron.TronTransfer
 import com.tonapps.blockchain.tron.isValidTronAddress
 import com.tonapps.bus.core.AnalyticsHelper
-import com.tonapps.bus.core.contract.RedMetadata
 import com.tonapps.bus.generated.Events
 import com.tonapps.bus.generated.opTerminal
 import com.tonapps.core.helper.WalletRedMetadata
@@ -40,7 +42,6 @@ import com.tonapps.deposit.usecase.sign.SignUseCase
 import com.tonapps.extensions.MutableEffectFlow
 import com.tonapps.extensions.currentTimeMillis
 import com.tonapps.extensions.currentTimeSecondsInt
-import com.tonapps.extensions.filterList
 import com.tonapps.extensions.generateUuid
 import com.tonapps.extensions.isPositive
 import com.tonapps.extensions.singleValue
@@ -72,6 +73,14 @@ import com.tonapps.wallet.data.settings.entities.PreferredFeeMethod
 import com.tonapps.wallet.data.settings.entities.PreferredTronFeeMethod
 import com.tonapps.wallet.data.token.TokenRepository
 import com.tonapps.wallet.data.token.entities.AccountTokenEntity
+import com.tonapps.wallet.data.token.entities.TokenRateEntity
+import com.tonapps.wallet.data.gem.AssetMetadata as GemAssetMetadata
+import com.tonapps.wallet.data.gem.Chain as GemChain
+import com.tonapps.wallet.data.gem.GemSendCoordinator
+import com.tonapps.wallet.data.gem.GemWalletDataSource
+import com.tonapps.wallet.data.gem.WalletId as GemWalletId
+import com.tonapps.wallet.data.gem.feeEstimate
+import com.tonapps.wallet.data.gem.selectFee
 import com.tonapps.wallet.data.tx.TransactionManager
 import com.tonapps.wallet.localization.Localization
 import io.batteryapi.models.EstimatedTronTx
@@ -110,6 +119,7 @@ import kotlin.math.abs
 import kotlin.time.Duration.Companion.seconds
 
 @OptIn(FlowPreview::class)
+@Suppress("LargeClass")
 class SendViewModel(
     app: Application,
     private val wallet: WalletEntity,
@@ -124,7 +134,9 @@ class SendViewModel(
     private val transactionManager: TransactionManager,
     private val emulationUseCase: EmulationUseCase,
     private val signUseCase: SignUseCase,
-    private val analytics: AnalyticsHelper
+    private val analytics: AnalyticsHelper,
+    private val gemWalletDataSource: GemWalletDataSource,
+    private val gemSendCoordinator: GemSendCoordinator,
 ) : BaseWalletVM(app) {
 
     private val isNft: Boolean
@@ -154,7 +166,7 @@ class SendViewModel(
             is SendFee.Gasless -> Events.SendNative.SendNativeFeePaidIn.Gasless
             is SendFee.Battery -> Events.SendNative.SendNativeFeePaidIn.Battery
             is SendFee.TronTrx -> Events.SendNative.SendNativeFeePaidIn.Trx
-            is SendFee.TronTon -> Events.SendNative.SendNativeFeePaidIn.Ton
+            is SendFee.TronTon, is SendFee.Gem -> Events.SendNative.SendNativeFeePaidIn.Ton
             null -> Events.SendNative.SendNativeFeePaidIn.Ton
         }
 
@@ -206,6 +218,10 @@ class SendViewModel(
     ) { userInput, isTronAvailable, selectedToken ->
         if (userInput.isEmpty()) {
             SendDestination.Empty
+        } else if (wallet.isGem) {
+            gemChain(selectedToken)?.let { chain ->
+                SendDestination.GemAccount(userInput, chain.key)
+            } ?: SendDestination.NotFound
         } else if (isTronAvailable && userInput.isValidTronAddress()) {
             if (selectedToken.isTrc20) {
                 SendDestination.TronAccount(userInput)
@@ -234,6 +250,8 @@ class SendViewModel(
     private var batteryFee: SendFee.Battery? = null
     private var tronTrxFee: SendFee.TronTrx? = null
     private var tronTonFee: SendFee.TronTon? = null
+    private var gemFeeOptions = emptyList<SendFee.Gem>()
+    private var gemTransaction: com.tonapps.wallet.data.gem.PreloadedTransaction? = null
 
     val feeOptions: List<SendFee>
         get() = listOfNotNull(
@@ -242,7 +260,7 @@ class SendViewModel(
             gaslessFee,
             tronTonFee,
             tronTrxFee,
-        )
+        ) + gemFeeOptions
 
     private val ratesTokenFlow = selectedTokenFlow.map { token ->
         ratesRepository.getRates(wallet.network, currency, token.address)
@@ -284,7 +302,7 @@ class SendViewModel(
 
     private val uiInputAmountCurrency =
         userInputFlow.map { it.amountCurrency }.distinctUntilChanged()
-            .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+            .stateIn(viewModelScope, SharingStarted.Eagerly, !wallet.isGem)
 
     private val inputAmountFlow = userInputFlow.map { it.amount }.distinctUntilChanged()
 
@@ -362,7 +380,7 @@ class SendViewModel(
         uiInputComment,
         uiInputCommentErrorFlow,
     ) { recipient, balance, amount, comment, commentError ->
-        if (recipient !is SendDestination.TonAccount && recipient !is SendDestination.TronAccount) {
+        if (recipient !is SendDestination.TonAccount && recipient !is SendDestination.TronAccount && recipient !is SendDestination.GemAccount) {
             false
         } else if (recipient is SendDestination.TonAccount && recipient.memoRequired && comment.isNullOrEmpty()) {
             false
@@ -485,13 +503,76 @@ class SendViewModel(
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
-            _tokensFlow.value = tokenRepository.get(currency, wallet.accountId, wallet.network)
+            _tokensFlow.value = if (wallet.isGem) {
+                loadGemTokens()
+            } else {
+                tokenRepository.get(currency, wallet.accountId, wallet.network)
+            }
         }
 
         if (isNft) {
             loadNft()
         }
     }
+
+    private suspend fun loadGemTokens(): List<AccountTokenEntity> = wallet.accounts.flatMap { account ->
+        val chain = GemChain.entries.firstOrNull { it.key == account.chain } ?: return@flatMap emptyList()
+        gemWalletDataSource.getAssets(GemWalletId(wallet.id), chain).getOrNull().orEmpty().map { asset ->
+            val known = asset.asset.metadata as? GemAssetMetadata.Known
+            val token = TokenEntity(
+                blockchain = Blockchain.GEM,
+                address = "${chain.key}:${asset.asset.id.value}",
+                name = known?.name ?: asset.asset.id.value,
+                symbol = known?.symbol ?: asset.asset.id.value,
+                imageUri = Uri.EMPTY,
+                decimals = known?.decimals ?: nativeDecimals(chain),
+                verification = Verification.none,
+                isRequestMinting = false,
+                isTransferable = true,
+                customPayloadApiUri = null,
+            )
+            AccountTokenEntity.create(
+                balance = BalanceEntity(
+                    token = token,
+                    value = Coins.ofNano(asset.balance.amount.orEmpty(), token.decimals),
+                    walletAddress = account.address,
+                ),
+                fiatRate = TokenRateEntity(
+                    currency = currency,
+                    fiat = Coins.ZERO,
+                    rate = Coins.ZERO,
+                    rateDiff24h = "",
+                ),
+            )
+        }
+    }
+
+    private fun nativeDecimals(chain: GemChain): Int = when (chain) {
+        GemChain.Bitcoin -> 8
+        GemChain.Ethereum, GemChain.SmartChain -> 18
+        GemChain.Solana -> 9
+        GemChain.Ton -> 9
+    }
+
+    private fun gemChain(token: AccountTokenEntity): GemChain? {
+        if (token.blockchain != Blockchain.GEM) return null
+        val chainKey = token.address.substringBefore(':')
+        return GemChain.entries.firstOrNull { it.key == chainKey }
+    }
+
+    private fun gemNativeToken(chain: GemChain, symbol: String, decimals: Int): TokenEntity =
+        TokenEntity(
+            blockchain = Blockchain.GEM,
+            address = "${chain.key}:native",
+            name = symbol,
+            symbol = symbol,
+            imageUri = Uri.EMPTY,
+            decimals = decimals,
+            verification = Verification.none,
+            isRequestMinting = false,
+            isTransferable = true,
+            customPayloadApiUri = null,
+        )
 
     fun initializeBus(
         from: Events.SendNative.SendNativeFrom,
@@ -505,17 +586,21 @@ class SendViewModel(
         amount: Coins?,
         type: Type,
     ) {
-        tokensFlow.take(1).filter {
-            it.isNotEmpty()
-        }.filterList {
-            if (tokenAddress != null) {
-                it.address.equalsAddress(tokenAddress)
-            } else {
-                it.address.equalsAddress(TokenEntity.TON.address)
+        tokensFlow.take(1).filter { it.isNotEmpty() }.map { tokens ->
+            tokens.firstOrNull { token ->
+                tokenAddress != null && if (wallet.isGem) {
+                    token.address == tokenAddress
+                } else {
+                    token.address.equalsAddress(tokenAddress)
+                }
             }
-        }.map { it.firstOrNull()?.balance?.token }.map { token ->
-            token ?: tokenAddress?.let { tokenRepository.getToken(tokenAddress, wallet.network) }
-            ?: TokenEntity.TON
+                ?: if (wallet.isGem) {
+                    tokens.first()
+                } else {
+                    tokens.firstOrNull { it.isTon }
+                }
+                ?: tokenAddress?.let { tokenRepository.getToken(tokenAddress, wallet.network) }
+                ?: TokenEntity.TON
         }.flowOn(Dispatchers.IO).onEach { token ->
             userInputToken(token)
             applyAmount(token, amount)
@@ -647,20 +732,12 @@ class SendViewModel(
         accountRepository.getWallets().size
     }
 
-    private suspend fun getTokenAmount(): Coins = withContext(Dispatchers.IO) {
-        val amount = userInputFlow.value.amount
-        val token = selectedTokenFlow.value
-        if (!userInputFlow.value.amountCurrency) {
-            amount
-        } else {
-            val rates = ratesRepository.getRates(wallet.network, currency, token.address)
-            rates.convertFromFiat(token.address, amount)
-        }
-    }
-
     private suspend fun getTrxBalance(): Coins = withContext(Dispatchers.IO) {
         tokenRepository.get(settingsRepository.currency, wallet.accountId, wallet.network)
-            ?.find { it.isTrx }?.balance?.value ?: Coins.ZERO
+            ?.find { it.isTrx }
+            ?.balance
+            ?.value
+            ?: Coins.ZERO
     }
 
     private suspend fun getTONBalance(): Coins = withContext(Dispatchers.IO) {
@@ -896,6 +973,45 @@ class SendViewModel(
         checkTronFee(transfer)
     }
 
+    private suspend fun nextGem() {
+        val token = selectedTokenFlow.value
+        val chain = gemChain(token) ?: throw IllegalStateException("Gem chain is missing")
+        val sender = wallet.accounts.firstOrNull { it.chain == chain.key }?.address
+            ?: throw IllegalStateException("Gem sender address is missing")
+        val destination = destinationFlow.value as? SendDestination.GemAccount
+            ?: throw IllegalStateException("Destination is not a Gem account")
+        val amount = amountTokenFlow.value.value.movePointRight(token.decimals).toBigIntegerExact().toString()
+        val metadata = GemAssetMetadata.Known(token.symbol, token.name, token.decimals)
+        val draft = GemSendCoordinator.draft(
+            walletId = GemWalletId(wallet.id),
+            chain = chain,
+            assetId = com.tonapps.wallet.data.gem.AssetId(chain, token.address.substringAfter(':')),
+            sender = sender,
+            recipient = destination.address,
+            amount = amount,
+            metadata = metadata,
+            isMaxValue = amountTokenFlow.value == token.balance.uiBalance,
+            memo = userInputFlow.value.comment?.ifBlank { null },
+        )
+        val transaction = gemSendCoordinator.preload(draft).getOrThrow()
+        gemTransaction = transaction
+        gemFeeOptions = transaction.data.indices.mapNotNull { index ->
+            val estimate = transaction.feeEstimate(index) ?: return@mapNotNull null
+            val feeToken = gemNativeToken(estimate.chain, estimate.symbol, estimate.decimals)
+            SendFee.Gem(
+                amount = Fee(Coins.ofNano(estimate.amount, estimate.decimals), false, feeToken),
+                fiatAmount = Coins.ZERO,
+                fiatCurrency = currency,
+                index = estimate.index,
+            )
+        }
+        val fee = gemFeeOptions.firstOrNull() ?: throw IllegalStateException("Gem fee is missing")
+        gemTransaction = transaction.selectFee(fee.index).getOrThrow()
+        _feeFlow.tryEmit(fee)
+        eventFee(fee)?.let { _uiFeeFlow.tryEmit(it) }
+        _uiEventFlow.tryEmit(SendEvent.Confirm)
+    }
+
     fun next() {
         L.d("SendViewModelLog", "next() called with: ")
         _tonTransferFlow.value = null
@@ -913,7 +1029,9 @@ class SendViewModel(
                 otherMetadata = WalletRedMetadata.walletKit(),
             )
             try {
-                if (selectedTokenFlow.value.isTrc20) {
+                if (wallet.isGem) {
+                    nextGem()
+                } else if (selectedTokenFlow.value.isTrc20) {
                     nextTron()
                 } else {
                     nextTon()
@@ -984,6 +1102,8 @@ class SendViewModel(
         batteryFee = null
         tronTonFee = null
         tronTrxFee = null
+        gemFeeOptions = emptyList()
+        gemTransaction = null
     }
 
     private suspend fun calculateFee(
@@ -1253,7 +1373,7 @@ class SendViewModel(
                 } else {
                     ""
                 },
-                convertedFormat = if (fee is SendFee.TokenFee) {
+                convertedFormat = if (fee is SendFee.TokenFee && fee !is SendFee.Gem) {
                     val rates = ratesRepository.getRates(wallet.network, currency, fee.amount.token.address)
                     val converted = rates.convert(fee.amount.token.address, fee.amount.value)
                     CurrencyFormatter.format(
@@ -1301,18 +1421,6 @@ class SendViewModel(
         }
     }
 
-    private fun userInputTokenByAddress(tokenAddress: String) {
-        tokensFlow.take(1).filter {
-            it.isNotEmpty()
-        }.filterList {
-            it.address.equalsAddress(tokenAddress)
-        }.map { it.firstOrNull()?.balance?.token }.map { token ->
-            token ?: tokenRepository.getToken(tokenAddress, wallet.network) ?: TokenEntity.TON
-        }.flowOn(Dispatchers.IO).onEach { token ->
-            userInputToken(token)
-        }.launchIn(viewModelScope)
-    }
-
     fun userInputAddress(address: String) {
         _userInputFlow.update {
             it.copy(address = address)
@@ -1326,6 +1434,7 @@ class SendViewModel(
     }
 
     fun swap() {
+        if (wallet.isGem) return
         val balance = uiBalanceFlow.value.copy()
         val amountCurrency = _userInputFlow.updateAndGet {
             it.copy(amountCurrency = !it.amountCurrency)
@@ -1349,7 +1458,17 @@ class SendViewModel(
     }
 
     fun setFeeMethod(fee: SendFee) {
-        if (fee is SendFee.TronTrx && !fee.enoughBalance) {
+        if (fee is SendFee.Gem) {
+            val transaction = gemTransaction ?: return
+            val selected = transaction.selectFee(fee.index).getOrNull() ?: return
+            gemTransaction = selected
+            gemFeeOptions.firstOrNull { it.index == fee.index }?.let { selectedFee ->
+                viewModelScope.launch(Dispatchers.IO) {
+                    _feeFlow.tryEmit(selectedFee)
+                    eventFee(selectedFee)?.let { _uiFeeFlow.tryEmit(it) }
+                }
+            }
+        } else if (fee is SendFee.TronTrx && !fee.enoughBalance) {
             viewModelScope.launch {
                 openScreen(QrAssetFragment.newInstance(TokenEntity.TRX))
             }
@@ -1511,7 +1630,9 @@ class SendViewModel(
                 otherMetadata = WalletRedMetadata.walletKit(),
             )
             try {
-                if (selectedTokenFlow.value.isTrc20) {
+                if (wallet.isGem) {
+                    signGem()
+                } else if (selectedTokenFlow.value.isTrc20) {
                     signTron()
                 } else {
                     signTon()
@@ -1636,6 +1757,11 @@ class SendViewModel(
             }
         }
         getBatteryBalance()
+    }
+
+    private suspend fun signGem() {
+        val transaction = gemTransaction ?: throw IllegalStateException("Gem transaction is null")
+        gemSendCoordinator.submit(transaction).getOrThrow()
     }
 
     private suspend fun send(

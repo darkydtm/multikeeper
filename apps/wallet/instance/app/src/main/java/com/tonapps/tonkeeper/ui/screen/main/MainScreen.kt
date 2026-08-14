@@ -190,6 +190,7 @@ class MainScreen: BaseWalletScreen<ScreenContext.None>(R.layout.fragment_main, S
         }.launchIn(lifecycleScope)
 
         collectFlow(rootViewModel.eventFlow.filterIsInstance<RootEvent.Swap>()) {
+            if (it.wallet.isGem) return@collectFlow
             val fromCurrency = WalletCurrency.of(it.from) ?: WalletCurrency.TON
             val toCurrency = it.to?.let { to -> WalletCurrency.of(to) }
             navigation?.add(SwapScreen.newInstance(
@@ -303,13 +304,20 @@ class MainScreen: BaseWalletScreen<ScreenContext.None>(R.layout.fragment_main, S
         view.alpha = 1f
     }
 
-	private fun applyWallet(wallet: WalletEntity) {
+    private fun applyWallet(wallet: WalletEntity) {
 		val walletChanged = currentWallet != null && currentWallet?.id != wallet.id
 		if (walletChanged && fragments.isNotEmpty()) {
             childFragmentManager.removeAllFragments()
             fragments.clear()
         }
 		currentWallet = wallet
+		bottomTabsView.toggleItem(R.id.activity, !wallet.isGem && !WalletFeature.TradingTab.isEnabled)
+		bottomTabsView.toggleItem(R.id.trading, !wallet.isGem && WalletFeature.TradingTab.isEnabled)
+		bottomTabsView.toggleItem(R.id.collectibles, !wallet.isGem)
+		bottomTabsView.toggleItem(R.id.browser, !wallet.isGem)
+		if (wallet.isGem && bottomTabsView.selectedItemId != R.id.wallet) {
+			bottomTabsView.selectedItemId = R.id.wallet
+		}
 
         bottomTabsView.doOnClick = { itemId ->
             if (itemId == R.id.trading) {

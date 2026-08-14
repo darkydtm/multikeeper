@@ -4,6 +4,9 @@ import android.content.Context
 import com.tonapps.blockchain.model.legacy.TokenEntity
 import com.tonapps.blockchain.model.legacy.WalletCurrency
 import com.tonapps.blockchain.model.legacy.WalletEntity
+import com.tonapps.blockchain.model.legacy.BalanceEntity
+import com.tonapps.blockchain.contract.Blockchain
+import com.tonapps.blockchain.model.legacy.TokenEntity.Verification
 import com.tonapps.blockchain.ton.extensions.equalsAddress
 import com.tonapps.deposit.usecase.emulation.EmulationUseCase
 import com.tonapps.icu.Coins
@@ -20,6 +23,9 @@ import com.tonapps.wallet.data.staking.entities.StakingEntity
 import com.tonapps.wallet.data.token.TokenRepository
 import com.tonapps.wallet.data.token.entities.AccountTokenEntity
 import com.tonapps.wallet.data.token.entities.TokenRateEntity
+import com.tonapps.wallet.data.gem.Chain as GemChain
+import com.tonapps.wallet.data.gem.GemWalletDataSource
+import com.tonapps.wallet.data.gem.WalletId as GemWalletId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.drop
@@ -36,6 +42,7 @@ class AssetsManager(
     private val settingsRepository: SettingsRepository,
     private val accountRepository: AccountRepository,
     private val api: API,
+    private val gemWalletDataSource: GemWalletDataSource,
 ) : EmulationUseCase.Delegate {
 
     private val cache = TotalBalanceCache(context)
@@ -53,6 +60,7 @@ class AssetsManager(
         currency: WalletCurrency = settingsRepository.currency,
         refresh: Boolean,
     ): List<AssetsEntity>? {
+        if (wallet.isGem) return getGemAssets(wallet)
         val tokens = getTokens(wallet, currency, refresh)
         var staked = getStaked(wallet, tokens.map { it.token }, currency, refresh)
 
@@ -102,6 +110,7 @@ class AssetsManager(
     suspend fun getToken(
         wallet: WalletEntity, token: String, currency: WalletCurrency = settingsRepository.currency
     ): AssetsEntity.Token? {
+        if (wallet.isGem) return getGemAssets(wallet).orEmpty().filterIsInstance<AssetsEntity.Token>().firstOrNull { it.address == token }
         val tokens = getTokens(wallet, currency, false)
         return tokens.firstOrNull {
             it.token.address.equalsAddress(token)
@@ -113,6 +122,7 @@ class AssetsManager(
         accountIds: List<String>,
         currency: WalletCurrency = settingsRepository.currency
     ): List<AssetsEntity.Token> = withContext(Dispatchers.IO) {
+        if (wallet.isGem) return@withContext getGemAssets(wallet).orEmpty().filterIsInstance<AssetsEntity.Token>()
         if (accountIds.isEmpty()) {
             emptyList()
         } else {
@@ -128,11 +138,14 @@ class AssetsManager(
         currency: WalletCurrency = settingsRepository.currency,
         refresh: Boolean,
     ): List<AssetsEntity.Token> {
+        if (wallet.isGem) return getGemAssets(wallet).orEmpty().filterIsInstance<AssetsEntity.Token>()
         val safeMode = settingsRepository.isSafeModeEnabled(wallet.network)
         val tronAddress =
             if (wallet.hasPrivateKey && !wallet.testnet) {
                 accountRepository.getTronAddress(wallet.id)
-            } else null
+            } else {
+                null
+            }
         val tokens =
             tokenRepository.get(currency, wallet.accountId, wallet.network, refresh, tronAddress)
                 ?: return emptyList()
@@ -154,6 +167,7 @@ class AssetsManager(
         currency: WalletCurrency = settingsRepository.currency,
         refresh: Boolean,
     ): List<AssetsEntity.Staked> {
+        if (wallet.isGem) return emptyList()
         val staking = getStaking(wallet, refresh)
         val staked = StakedEntity.create(wallet, staking, tokens, currency, ratesRepository)
         return staked.map { AssetsEntity.Staked(it) }
@@ -169,6 +183,63 @@ class AssetsManager(
             ignoreCache = refresh,
             initializedAccount = wallet.initialized
         )
+    }
+
+    private suspend fun getGemAssets(wallet: WalletEntity): List<AssetsEntity> {
+        val result = wallet.accounts.flatMap { account ->
+            val chain = GemChain.entries.firstOrNull { it.key == account.chain } ?: return@flatMap emptyList()
+            val assets = gemWalletDataSource.getAssets(GemWalletId(wallet.id), chain).getOrNull().orEmpty()
+            val portfolio = gemWalletDataSource.getPortfolio(GemWalletId(wallet.id), chain)
+                .getOrNull()
+                ?.assets
+                ?.associateBy { it.asset.id.value }
+                .orEmpty()
+            assets.map { asset ->
+                val metadata = asset.asset.metadata
+                val known = metadata as? com.tonapps.wallet.data.gem.AssetMetadata.Known
+                val token = TokenEntity(
+                    blockchain = Blockchain.GEM,
+                    address = "${chain.key}:${asset.asset.id.value}",
+                    name = known?.name ?: asset.asset.id.value,
+                    symbol = known?.symbol ?: asset.asset.id.value,
+                    imageUri = android.net.Uri.EMPTY,
+                    decimals = known?.decimals ?: nativeDecimals(chain),
+                    verification = Verification.none,
+                    isRequestMinting = false,
+                    isTransferable = true,
+                    customPayloadApiUri = null,
+                )
+                val balance = BalanceEntity(
+                    token = token,
+                    value = Coins.of(asset.balance.amount.orEmpty(), token.decimals),
+                    walletAddress = account.address,
+                )
+                val fiat = if (settingsRepository.currency.code == "USD") {
+                    Coins.of(portfolio[asset.asset.id.value]?.balance?.amount.orEmpty(), 2)
+                } else {
+                    Coins.ZERO
+                }
+                AssetsEntity.Token(
+                    AccountTokenEntity.create(
+                        balance = balance,
+                        fiatRate = TokenRateEntity(
+                            currency = settingsRepository.currency,
+                            fiat = fiat,
+                            rate = Coins.ZERO,
+                            rateDiff24h = "",
+                        ),
+                    ),
+                )
+            }
+        }
+        return result
+    }
+
+    private fun nativeDecimals(chain: GemChain): Int = when (chain) {
+        GemChain.Bitcoin -> 8
+        GemChain.Ethereum, GemChain.SmartChain -> 18
+        GemChain.Solana -> 9
+        GemChain.Ton -> 9
     }
 
     fun getCachedTotalBalance(

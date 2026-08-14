@@ -7,9 +7,15 @@ import io.tonapi.models.AccountStatus
 import org.ton.api.pub.PublicKeyEd25519
 import org.ton.block.AddrStd
 
+@Suppress("ClassOrdering")
 sealed class SendDestination {
 
     data class TronAccount(val address: String) : SendDestination()
+
+    data class GemAccount(
+        val address: String,
+        val chain: String,
+    ) : SendDestination()
 
     data class TokenError(
         val addressBlockchain: Blockchain,

@@ -73,6 +73,9 @@ sealed class State {
 
         fun getBalanceType(wallet: WalletEntity): Int {
             val balanceFiat = getTotalBalanceFiat(wallet)
+            if (wallet.isGem) {
+                return BalanceType.getBalanceType(balanceFiat)
+            }
             val balanceTON = rates.convertFromFiat(TokenEntity.TON.address, balanceFiat)
             return BalanceType.getBalanceType(balanceTON)
         }
@@ -325,7 +328,9 @@ sealed class State {
                 }
             }
             uiItems.add(uiItemBalance(hiddenBalance, status, lastUpdatedFormat, prefixYourAddress))
-            uiItems.add(uiItemActions(config))
+            if (!wallet.isGem) {
+                uiItems.add(uiItemActions(config))
+            }
             if (banners.isNotEmpty()) {
                 uiItems.add(Item.Banners(walletId = wallet.id, banners = banners))
             }

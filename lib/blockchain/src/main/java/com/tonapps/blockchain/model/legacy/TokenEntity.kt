@@ -138,12 +138,14 @@ data class TokenEntity(
             val chain = when (blockchain) {
                 Blockchain.TON -> "ton"
                 Blockchain.TRON -> "tron"
+                Blockchain.GEM -> "gem"
             }
             val net = if (network.isMainnet) "mainnet" else "testnet"
             val isCoin = address == TON.address || address == TRX.address
             val type = when {
                 isCoin -> "coin"
                 blockchain == Blockchain.TRON -> "trc20"
+                blockchain == Blockchain.GEM -> "asset"
                 else -> "jetton"
             }
             return if (isCoin) {
@@ -203,7 +205,11 @@ data class TokenEntity(
         WalletCurrency(
             code = symbol,
             title = name,
-            chain = if (blockchain == Blockchain.TRON) Chain.TRON(address, decimals) else Chain.TON(address, decimals),
+            chain = when (blockchain) {
+                Blockchain.TON -> Chain.TON(address, decimals)
+                Blockchain.TRON -> Chain.TRON(address, decimals)
+                Blockchain.GEM -> Chain.Unknown("gem", address, decimals)
+            },
             iconUrl = imageUri.toString(),
             isToken = tokenType != null,
             isFiat = false,
@@ -212,6 +218,9 @@ data class TokenEntity(
 
     @IgnoredOnParcel
     val tokenType by lazy {
+        if (blockchain == Blockchain.GEM) {
+            return@lazy TokenType.Arbitrary("gem")
+        }
         if (!isUsdt && !isUsdtTrc20) {
             return@lazy null
         }
@@ -219,6 +228,7 @@ data class TokenEntity(
         when (blockchain) {
             Blockchain.TON -> TokenType.Defined.JETTON
             Blockchain.TRON -> TokenType.Defined.TRC20
+            Blockchain.GEM -> TokenType.Arbitrary("gem")
         }
     }
 

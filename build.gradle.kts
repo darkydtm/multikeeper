@@ -2,6 +2,8 @@ import com.android.build.api.dsl.ApplicationExtension
 import java.util.Properties
 
 plugins {
+    alias(libs.plugins.android.plugin) apply false
+    alias(libs.plugins.android.library) apply false
     alias(libs.plugins.android.test) apply false
     alias(libs.plugins.android.baselineprofile) apply false
     alias(libs.plugins.kotlin.serialization) apply false

@@ -35,6 +35,8 @@ class AddWalletScreen: BaseListWalletScreen<ScreenContext.None>(ScreenContext.No
         when(item.id) {
             Item.NEW_WALLET_ID -> openScreen(InitScreen.newInstance(InitArgs.Type.New))
             Item.IMPORT_WALLET_ID -> openScreen(InitScreen.newInstance(InitArgs.Type.Import))
+            Item.GEM_NEW_WALLET_ID -> openScreen(InitScreen.newInstance(InitArgs.Type.GemNew))
+            Item.GEM_IMPORT_WALLET_ID -> openScreen(InitScreen.newInstance(InitArgs.Type.GemImport))
             Item.WATCH_WALLET_ID -> openScreen(InitScreen.newInstance(InitArgs.Type.Watch))
             Item.TESTNET_WALLET_ID -> openScreen(InitScreen.newInstance(InitArgs.Type.Testnet))
             Item.SIGNER_WALLET_ID -> openScreen(SignerAddScreen.newInstance())

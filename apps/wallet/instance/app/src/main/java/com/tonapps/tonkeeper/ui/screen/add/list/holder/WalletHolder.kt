@@ -16,8 +16,8 @@ class WalletHolder(
     override fun onBind(item: Item.Wallet) {
         itemActionView.setHapticClickListener { onClick(item) }
         itemActionView.iconRes = item.iconResId
-        itemActionView.title = getString(item.titleResId)
-        itemActionView.subtitle = getString(item.subtitleResId)
+		itemActionView.title = item.titleText ?: getString(item.titleResId)
+		itemActionView.subtitle = item.subtitleText ?: getString(item.subtitleResId)
     }
 
 }

@@ -7,6 +7,7 @@ import com.tonapps.uikit.icon.UIKitIcon
 import com.tonapps.uikit.list.BaseListItem
 import com.tonapps.wallet.localization.Localization
 
+@Suppress("ClassOrdering")
 sealed class Item(type: Int): BaseListItem(type) {
 
     companion object {
@@ -22,6 +23,8 @@ sealed class Item(type: Int): BaseListItem(type) {
         const val KEYSTONE_WALLET_ID = 6
         const val NEW_WALLET_ID = 7
         const val TETRA_WALLET_ID = 8
+        const val GEM_NEW_WALLET_ID = 9
+        const val GEM_IMPORT_WALLET_ID = 10
 
         fun header(title: Int, subtitle: Int): Header {
             return Header(title, subtitle)
@@ -86,13 +89,33 @@ sealed class Item(type: Int): BaseListItem(type) {
             titleResId = Localization.tetra_title,
             subtitleResId = Localization.tetra_subtitle
         )
+
+        val gemNew = Wallet(
+			id = GEM_NEW_WALLET_ID,
+			iconResId = R.drawable.ic_plus_circle_28,
+			titleResId = Localization.new_wallet,
+			subtitleResId = Localization.start_create_new_wallet,
+			titleText = "Gem Wallet",
+			subtitleText = "Create a new Gem wallet",
+		)
+
+		val gemImport = Wallet(
+			id = GEM_IMPORT_WALLET_ID,
+			iconResId = UIKitIcon.ic_key_28,
+			titleResId = Localization.import_wallet,
+			subtitleResId = Localization.import_wallet_words,
+			titleText = "Gem Wallet",
+			subtitleText = "Import a Gem wallet",
+		)
     }
 
     data class Wallet(
         val id: Int,
         @DrawableRes val iconResId: Int,
         @StringRes val titleResId: Int,
-        @StringRes val subtitleResId: Int
+        @StringRes val subtitleResId: Int,
+		val titleText: String? = null,
+		val subtitleText: String? = null,
     ): Item(TYPE_WALLET)
 
     data class Header(

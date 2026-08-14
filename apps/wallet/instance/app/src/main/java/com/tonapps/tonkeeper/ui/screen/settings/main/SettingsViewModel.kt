@@ -34,6 +34,7 @@ import com.tonapps.wallet.data.rn.RNLegacy
 import com.tonapps.wallet.data.settings.SettingsRepository
 import com.tonapps.wallet.data.token.TokenRepository
 import com.tonapps.wallet.data.plugins.PluginsRepository
+import com.tonapps.wallet.data.gem.GemRuntimeCoordinator
 import com.tonapps.wallet.localization.Language
 import com.tonapps.wallet.localization.Localization
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +63,7 @@ class SettingsViewModel(
     private val tokenRepository: TokenRepository,
     private val batteryRepository: BatteryRepository,
     private val pluginsRepository: PluginsRepository,
+    private val gemRuntimeCoordinator: GemRuntimeCoordinator,
     private val analytics: AnalyticsHelper
 ) : BaseWalletVM(application) {
 
@@ -137,10 +139,13 @@ class SettingsViewModel(
             tonConnectBridge.clear(wallet)
             PushToggleWorker.run(context, wallet, PushManager.State.Delete)
             delay(2000)
+            if (wallet.isGem) {
+                gemRuntimeCoordinator.deleteWallet(wallet.id, wallet.keystoreId)
+            }
+            accountRepository.delete(wallet)
             withContext(Dispatchers.Main) {
                 callback()
             }
-            accountRepository.delete(wallet)
         }
     }
 
@@ -234,8 +239,8 @@ class SettingsViewModel(
         hasBackup: Boolean
     ) {
         val config = api.getConfig(wallet.network)
-        val hasW5 = hasW5()
-        val hasV4R2 = hasV4R2()
+        val hasW5 = !wallet.isGem && hasW5()
+        val hasV4R2 = !wallet.isGem && hasV4R2()
         val uiItems = mutableListOf<Item>()
         uiItems.add(Item.Account(displayWallet))
 
@@ -249,7 +254,7 @@ class SettingsViewModel(
 
         uiItems.add(Item.Space)
 
-        if (wallet.hasPrivateKey && wallet.network.isMainnet && !config.flags.disableTron) {
+        if (wallet.hasPrivateKey && !wallet.isGem && wallet.network.isMainnet && !config.flags.disableTron) {
             val tronUsdtEnabled = settingsRepository.getTronUsdtEnabled(displayWallet.id)
             uiItems.add(Item.TronToggle(enabled = tronUsdtEnabled))
             uiItems.add(Item.Space)
@@ -265,7 +270,7 @@ class SettingsViewModel(
             ListCell.Position.FIRST
         }
 
-        if (wallet.hasPrivateKey) {
+        if (wallet.hasPrivateKey && !wallet.isGem) {
             if (!hasW5) {
                 uiItems.add(Item.W5(secondCellPosition))
                 secondCellPosition = ListCell.Position.MIDDLE
@@ -292,8 +297,8 @@ class SettingsViewModel(
             getString(Localization.system)
         }.capitalized, ListCell.Position.MIDDLE))
 
-        val batteryCharges = getBatteryCharges()
-        if (wallet.hasPrivateKey && (!config.flags.disableBattery || batteryCharges > 0)) {
+        val batteryCharges = if (wallet.isGem) 0 else getBatteryCharges()
+        if (wallet.hasPrivateKey && !wallet.isGem && (!config.flags.disableBattery || batteryCharges > 0)) {
             uiItems.add(Item.Battery(ListCell.Position.MIDDLE))
         }
         if (WidgetManager.isRequestPinAppWidgetSupported) {

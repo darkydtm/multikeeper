@@ -117,5 +117,8 @@ data class AccountTokenEntity(
                 )
             )
         }
+
+        fun create(balance: BalanceEntity, fiatRate: TokenRateEntity): AccountTokenEntity =
+            AccountTokenEntity(balance, fiatRate)
     }
 }

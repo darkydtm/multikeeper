@@ -163,6 +163,7 @@ dependencies {
     implementation(projects.apps.wallet.features.trading)
     implementation(projects.apps.wallet.features.ramp)
     implementation(projects.apps.wallet.data.core)
+    implementation(projects.apps.wallet.data.gem)
     implementation(projects.apps.wallet.data.settings)
     implementation(projects.apps.wallet.data.passcode)
     implementation(projects.apps.wallet.data.staking)

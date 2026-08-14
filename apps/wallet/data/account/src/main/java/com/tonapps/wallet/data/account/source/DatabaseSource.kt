@@ -6,20 +6,22 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import androidx.core.database.getStringOrNull
-import androidx.core.database.sqlite.transaction
 import com.tonapps.blockchain.ton.contract.walletVersion
 import com.tonapps.extensions.closeSafe
 import com.tonapps.extensions.isNullOrEmpty
 import com.tonapps.extensions.toByteArray
 import com.tonapps.extensions.toParcel
+import com.tonapps.extensions.toListParcel
 import com.tonapps.sqlite.withTransaction
 import com.tonapps.blockchain.model.legacy.Wallet
 import com.tonapps.blockchain.model.legacy.WalletType
 import com.tonapps.blockchain.model.legacy.WalletEntity
+import com.tonapps.blockchain.model.legacy.WalletAccount
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.withContext
 import org.ton.api.pub.PublicKeyEd25519
 
+@Suppress("ClassOrdering")
 internal class DatabaseSource(
     context: Context,
     private val scope: CoroutineScope
@@ -27,7 +29,7 @@ internal class DatabaseSource(
 
     private companion object {
         private const val DATABASE_NAME = "account"
-        private const val DATABASE_VERSION = 4
+        private const val DATABASE_VERSION = 5
 
         private const val WALLET_TABLE_NAME = "wallet"
         private const val WALLET_TABLE_ID_COLUMN = "id"
@@ -41,6 +43,8 @@ internal class DatabaseSource(
         private const val WALLET_TABLE_KEYSTONE_XFP_COLUMN = "keystone_xfp"
         private const val WALLET_TABLE_KEYSTONE_PATH_COLUMN = "keystone_path"
         private const val WALLET_TABLE_INITIALIZED_COLUMN = "initialized"
+        private const val WALLET_TABLE_ACCOUNTS_COLUMN = "accounts"
+        private const val WALLET_TABLE_KEYSTORE_ID_COLUMN = "keystore_id"
 
         private val walletFields = arrayOf(
             WALLET_TABLE_ID_COLUMN,
@@ -52,7 +56,9 @@ internal class DatabaseSource(
             WALLET_TABLE_LEDGER_ACCOUNT_INDEX_COLUMN,
             WALLET_TABLE_KEYSTONE_XFP_COLUMN,
             WALLET_TABLE_KEYSTONE_PATH_COLUMN,
-            WALLET_TABLE_INITIALIZED_COLUMN
+            WALLET_TABLE_INITIALIZED_COLUMN,
+            WALLET_TABLE_ACCOUNTS_COLUMN,
+            WALLET_TABLE_KEYSTORE_ID_COLUMN
         ).joinToString(",")
 
         private fun WalletEntity.toValues(): ContentValues {
@@ -71,6 +77,8 @@ internal class DatabaseSource(
                 values.put(WALLET_TABLE_KEYSTONE_PATH_COLUMN, it.path)
             }
             values.put(WALLET_TABLE_INITIALIZED_COLUMN, initialized)
+            values.put(WALLET_TABLE_ACCOUNTS_COLUMN, accounts.map { it as android.os.Parcelable }.toByteArray())
+            values.put(WALLET_TABLE_KEYSTORE_ID_COLUMN, keystoreId)
             return values
         }
     }
@@ -86,7 +94,9 @@ internal class DatabaseSource(
                 "$WALLET_TABLE_LEDGER_ACCOUNT_INDEX_COLUMN INTEGER," +
                 "$WALLET_TABLE_KEYSTONE_XFP_COLUMN TEXT," +
                 "$WALLET_TABLE_KEYSTONE_PATH_COLUMN TEXT," +
-                "$WALLET_TABLE_INITIALIZED_COLUMN INTEGER DEFAULT 0" +
+                "$WALLET_TABLE_INITIALIZED_COLUMN INTEGER DEFAULT 0," +
+                "$WALLET_TABLE_ACCOUNTS_COLUMN BLOB," +
+                "$WALLET_TABLE_KEYSTORE_ID_COLUMN TEXT" +
                 ");")
 
         val walletIndexPrefix = "idx_$WALLET_TABLE_NAME"
@@ -96,19 +106,25 @@ internal class DatabaseSource(
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (1 >= oldVersion && newVersion == 2) {
+        if (oldVersion < 2) {
             db.execSQL("ALTER TABLE $WALLET_TABLE_NAME ADD COLUMN $WALLET_TABLE_LEDGER_DEVICE_ID_COLUMN TEXT;")
             db.execSQL("ALTER TABLE $WALLET_TABLE_NAME ADD COLUMN $WALLET_TABLE_LEDGER_ACCOUNT_INDEX_COLUMN INTEGER;")
         }
 
-        if (2 >= oldVersion && newVersion == 3) {
+        if (oldVersion < 3) {
             db.execSQL("ALTER TABLE $WALLET_TABLE_NAME ADD COLUMN $WALLET_TABLE_KEYSTONE_XFP_COLUMN TEXT;")
             db.execSQL("ALTER TABLE $WALLET_TABLE_NAME ADD COLUMN $WALLET_TABLE_KEYSTONE_PATH_COLUMN TEXT;")
         }
 
-        if (3 >= oldVersion && newVersion == 4) {
+        if (oldVersion < 4) {
             db.execSQL("ALTER TABLE $WALLET_TABLE_NAME ADD COLUMN $WALLET_TABLE_INITIALIZED_COLUMN INTEGER;")
         }
+
+        if (oldVersion < 5) {
+            db.execSQL("ALTER TABLE $WALLET_TABLE_NAME ADD COLUMN $WALLET_TABLE_ACCOUNTS_COLUMN BLOB;")
+            db.execSQL("ALTER TABLE $WALLET_TABLE_NAME ADD COLUMN $WALLET_TABLE_KEYSTORE_ID_COLUMN TEXT;")
+        }
+
     }
 
     suspend fun clearAccounts() = withContext(scope.coroutineContext) {
@@ -145,6 +161,18 @@ internal class DatabaseSource(
             for (wallet in wallets) {
                 writableDatabase.insertOrThrow(WALLET_TABLE_NAME, null, wallet.toValues())
             }
+        }
+    }
+
+    suspend fun replaceAccount(wallet: WalletEntity) = withContext(scope.coroutineContext) {
+        val result = writableDatabase.insertWithOnConflict(
+            WALLET_TABLE_NAME,
+            null,
+            wallet.toValues(),
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
+        if (result == -1L) {
+            throw IllegalStateException("Failed to save account ${wallet.id}")
         }
     }
 
@@ -197,6 +225,8 @@ internal class DatabaseSource(
         val keystoneXfpIndex = cursor.getColumnIndex(WALLET_TABLE_KEYSTONE_XFP_COLUMN)
         val keystonePathIndex = cursor.getColumnIndex(WALLET_TABLE_KEYSTONE_PATH_COLUMN)
         val initializedIndex = cursor.getColumnIndex(WALLET_TABLE_INITIALIZED_COLUMN)
+        val accountsIndex = cursor.getColumnIndex(WALLET_TABLE_ACCOUNTS_COLUMN)
+        val keystoreIdIndex = cursor.getColumnIndex(WALLET_TABLE_KEYSTORE_ID_COLUMN)
         val accounts = mutableListOf<WalletEntity>()
         while (cursor.moveToNext()) {
             val label = cursor.getBlob(labelIndex).toParcel<Wallet.Label>() ?: continue
@@ -207,7 +237,9 @@ internal class DatabaseSource(
                 type = Wallet.typeOf(cursor.getInt(typeIndex)),
                 version = walletVersion(cursor.getInt(versionIndex)),
                 label = label,
-                initialized = cursor.getInt(initializedIndex) == 1
+                initialized = cursor.getInt(initializedIndex) == 1,
+                accounts = cursor.getBlob(accountsIndex)?.toListParcel<WalletAccount>().orEmpty(),
+                keystoreId = cursor.getStringOrNull(keystoreIdIndex),
             )
             if (wallet.type == WalletType.Ledger) {
                 val ledger = WalletEntity.Ledger(

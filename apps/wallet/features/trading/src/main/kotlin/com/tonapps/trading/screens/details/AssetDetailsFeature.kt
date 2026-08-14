@@ -69,6 +69,7 @@ class AssetDetailsViewState(
 ) : MviViewState
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("ClassOrdering")
 class AssetDetailsFeature(
     private val tradingRepository: TradingRepository,
     private val tokenRepository: TokenRepository,
@@ -268,6 +269,7 @@ class AssetDetailsFeature(
             val txEvents = when (token.blockchain) {
                 Blockchain.TON -> loadTonTokenTransactions(wallet, token.address)
                 Blockchain.TRON -> loadTronTokenTransactions(wallet)
+                Blockchain.GEM -> null
             } ?: return emptyList()
             if (txEvents.isEmpty()) return null
             return txEvents.map {

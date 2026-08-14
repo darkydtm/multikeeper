@@ -241,6 +241,7 @@ class RootActivity : BaseWalletActivity(),
     override fun onOpenTxDetails(tx: TxEvent, actionIndex: Int) {
         lifecycleScope.launch {
             val wallet = accountRepository.getSelectedWallet() ?: return@launch
+            if (wallet.isGem) return@launch
             navigation?.add(TxDetailsScreen.newInstance(wallet, tx, actionIndex))
         }
     }
@@ -261,6 +262,7 @@ class RootActivity : BaseWalletActivity(),
 
         lifecycleScope.launch {
             val wallet = accountRepository.getSelectedWallet() ?: return@launch
+            if (wallet.isGem) return@launch
             navigation?.add(OmnistonScreen.newInstance(wallet, fromToken, toToken))
         }
     }
@@ -268,6 +270,7 @@ class RootActivity : BaseWalletActivity(),
     override fun onOpenSend(tokenAddress: String) {
         lifecycleScope.launch {
             val wallet = accountRepository.getSelectedWallet() ?: return@launch
+            if (wallet.isGem) return@launch
             navigation?.add(
                 SendScreen.newInstance(
                     wallet = wallet,
@@ -289,6 +292,7 @@ class RootActivity : BaseWalletActivity(),
     override fun onOpenStaking() {
         lifecycleScope.launch {
             val wallet = accountRepository.getSelectedWallet() ?: return@launch
+            if (wallet.isGem) return@launch
             navigation?.add(
                 StakingScreen.newInstance(wallet = wallet, from = "asset_details"),
             )
@@ -319,6 +323,7 @@ class RootActivity : BaseWalletActivity(),
     override fun onRechargeBattery() {
         lifecycleScope.launch {
             val wallet = accountRepository.getSelectedWallet() ?: return@launch
+            if (wallet.isGem) return@launch
             navigation?.add(BatteryScreen.newInstance(wallet, from = "insufficient_funds"))
         }
     }
@@ -539,6 +544,7 @@ class RootActivity : BaseWalletActivity(),
 
             is RootEvent.Transfer -> {
                 lifecycleScope.launch {
+                    if (event.wallet.isGem) return@launch
                     openSend(
                         targetAddress = event.address,
                         source = event.source,
@@ -554,13 +560,17 @@ class RootActivity : BaseWalletActivity(),
             }
 
             is RootEvent.CloseCurrentTonConnect -> closeCurrentTonConnect {}
-            is RootEvent.ShowTonConnect -> showTonConnectScreen(
-                event.request,
-                event.wallet,
-                event.fromPackageName
-            )
+            is RootEvent.ShowTonConnect -> if (event.wallet?.isGem != true) {
+                showTonConnectScreen(
+                    event.request,
+                    event.wallet,
+                    event.fromPackageName
+                )
+            }
 
-            is RootEvent.OpenDAppByShortcut -> openDAppByShortcut(event.wallet, event.url)
+            is RootEvent.OpenDAppByShortcut -> if (!event.wallet.isGem) {
+                openDAppByShortcut(event.wallet, event.url)
+            }
             else -> {}
         }
     }
@@ -752,6 +762,7 @@ class RootActivity : BaseWalletActivity(),
         initStateBase64: String? = null,
         validUnit: Long?,
     ) {
+        if (wallet.isGem) return
         if ((bin != null || initStateBase64 != null) && !amount.isPositive()) {
             toast(Localization.invalid_link)
             return

@@ -78,6 +78,9 @@ class WordsScreen: BaseFragment(R.layout.fragment_init_words) {
         titleView = view.findViewById(R.id.header_title)
 
         words24View = view.findViewById(R.id.words_24)
+        if (initViewModel.isGemFlow) {
+            words24View.visibility = View.GONE
+        }
         words24View.setHapticClickListener {
             if (initViewModel.wordsCount != WORDS24) {
                 setWordsCount(WORDS24)
@@ -149,8 +152,12 @@ class WordsScreen: BaseFragment(R.layout.fragment_init_words) {
     }
 
     private fun getCountFromClipboard() {
-        val count = TonMnemonic.parseMnemonic(requireContext().clipboardText()).size
-        if (count == 12 || count == 24) {
+		val count = if (initViewModel.isGemFlow) {
+			initViewModel.parseMnemonic(requireContext().clipboardText()).size
+		} else {
+			TonMnemonic.parseMnemonic(requireContext().clipboardText()).size
+		}
+        if (count == 12 || (!initViewModel.isGemFlow && count == 24)) {
             setWordsCount(count)
         } else {
             setWordsCount(initViewModel.wordsCount)
@@ -162,7 +169,7 @@ class WordsScreen: BaseFragment(R.layout.fragment_init_words) {
     }
 
     private fun setWordsCount(count: Int) {
-        if (count != WORDS24 && count != WORDS12) {
+        if (count != WORDS12 && (!initViewModel.isGemFlow && count != WORDS24)) {
             return
         }
         if (count == WORDS24) {
@@ -196,7 +203,11 @@ class WordsScreen: BaseFragment(R.layout.fragment_init_words) {
         val inputView = wordInputs.getOrNull(index) ?: return
         val text = inputView.text.toString()
         lifecycleScope.launch(Dispatchers.IO) {
-            val word = TonMnemonic.findWord(text)
+			val word = if (initViewModel.isGemFlow) {
+				initViewModel.suggestMnemonicWords(text).singleOrNull()
+			} else {
+				TonMnemonic.findWord(text)
+			}
             if (!word.isNullOrBlank()) {
                 withContext(Dispatchers.Main) {
                     inputView.setText(word)
@@ -207,13 +218,15 @@ class WordsScreen: BaseFragment(R.layout.fragment_init_words) {
         }
     }
 
-    private fun next() {
-        lifecycleScope.launch {
-            setLoading()
-            val words = getMnemonic()
-            if (TonMnemonic.isValidTONKeychain(words)) {
+	private fun next() {
+		lifecycleScope.launch {
+			setLoading()
+			val words = getMnemonic()
+			if (initViewModel.isGemFlow && words.size != WORDS12) {
+				navigation?.toast(Localization.incorrect_phrase)
+			} else if (!initViewModel.isGemFlow && TonMnemonic.isValidTONKeychain(words)) {
                 navigation?.toast(Localization.multi_account_secret_wrong)
-            } else if (initViewModel.watchRecoveryAccountId != null && initViewModel.getRecoveryWatchWallet(words) == null) {
+			} else if (!initViewModel.isGemFlow && initViewModel.watchRecoveryAccountId != null && initViewModel.getRecoveryWatchWallet(words) == null) {
                 navigation?.toast(Localization.mnemonic_match_error)
             } else {
                 if (!initViewModel.setMnemonic(words)) {
@@ -258,7 +271,11 @@ class WordsScreen: BaseFragment(R.layout.fragment_init_words) {
 
     private fun onTextChanged(index: Int, editable: Editable) {
         if (index == 0) {
-            val words = TonMnemonic.parseMnemonic(editable.toString())
+			val words = if (initViewModel.isGemFlow) {
+				initViewModel.parseMnemonic(editable.toString())
+			} else {
+				TonMnemonic.parseMnemonic(editable.toString())
+			}
             postOnAnimation {
                 if (words.isNotEmpty()) {
                     applyWords(words)
@@ -279,7 +296,11 @@ class WordsScreen: BaseFragment(R.layout.fragment_init_words) {
             suggestionsView.visibility = View.GONE
         } else {
             lifecycleScope.launch(Dispatchers.IO) {
-                val words = TonMnemonic.findWords(text).take(3)
+				val words = if (initViewModel.isGemFlow) {
+					initViewModel.suggestMnemonicWords(text).take(3)
+				} else {
+					TonMnemonic.findWords(text).take(3)
+				}
                 if (words.size == 1 && words.first().equals(text, true)) {
                     setSuggestions(index, emptyList())
                 } else {
@@ -326,8 +347,12 @@ class WordsScreen: BaseFragment(R.layout.fragment_init_words) {
         }
     }
 
-    private fun applyWords(words: List<String>) {
-        if (words.size > 1) {
+	private fun applyWords(words: List<String>) {
+		if (initViewModel.isGemFlow && words.size > WORDS12) {
+			navigation?.toast(Localization.incorrect_phrase)
+			return
+		}
+		if (words.size > 1) {
             wordInputs.first().clear()
             setWords(words)
         } else {
@@ -345,11 +370,17 @@ class WordsScreen: BaseFragment(R.layout.fragment_init_words) {
     }
 
     private suspend fun getMnemonic(): List<String> = withContext(Dispatchers.IO) {
-        val words = wordInputs
-            .map { it.text?.toString() }
-            .filter { TonMnemonic.isValid(it) }
-            .filterNotNull()
-            .take(initViewModel.wordsCount)
+		if (initViewModel.isGemFlow) {
+			return@withContext wordInputs
+				.flatMap { input ->
+					initViewModel.parseMnemonic(input.text?.toString().orEmpty())
+				}
+		}
+		val words = wordInputs
+			.map { it.text?.toString() }
+			.filter { TonMnemonic.isValid(it) }
+			.filterNotNull()
+			.take(initViewModel.wordsCount)
 
         if (words.size == wordInputs.count { it.visibility == View.VISIBLE }) {
             words

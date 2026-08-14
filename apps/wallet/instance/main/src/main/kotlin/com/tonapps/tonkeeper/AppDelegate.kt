@@ -50,6 +50,8 @@ import com.tonapps.wallet.data.core.dataModule
 import com.tonapps.wallet.data.dapps.dAppsModule
 import com.tonapps.wallet.data.events.eventsModule
 import com.tonapps.wallet.features.events.eventsFeatureModule
+import com.tonapps.wallet.data.gem.GemRuntimeCoordinator
+import com.tonapps.wallet.data.gem.gemModule
 import com.tonapps.wallet.data.passcode.passcodeModule
 import com.tonapps.wallet.data.plugins.pluginsModule
 import com.tonapps.wallet.data.purchase.purchaseModule
@@ -76,6 +78,7 @@ import java.util.concurrent.TimeUnit
 class AppDelegate : App(), CameraXConfig.Provider, KoinComponent, SingletonImageLoader.Factory {
 
     private val settingsRepository: SettingsRepository by inject()
+    private val gemRuntimeCoordinator: GemRuntimeCoordinator by inject()
 
     override fun onCreate() {
         if (BuildConfig.DEBUG && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -128,6 +131,7 @@ class AppDelegate : App(), CameraXConfig.Provider, KoinComponent, SingletonImage
                 swapModule,
                 backupModule,
                 dataModule,
+                gemModule,
                 browserModule,
                 bannerModule,
                 tradingModule,
@@ -144,6 +148,8 @@ class AppDelegate : App(), CameraXConfig.Provider, KoinComponent, SingletonImage
             )
             workManagerFactory()
         }
+
+        gemRuntimeCoordinator.start(Async.defaultScope())
 
         setLocales(settingsRepository.localeList)
     }

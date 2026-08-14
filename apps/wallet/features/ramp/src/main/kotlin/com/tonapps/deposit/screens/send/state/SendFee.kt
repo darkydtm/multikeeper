@@ -72,4 +72,11 @@ sealed class SendFee {
             get() = balance >= amount.value + TransferEntity.POINT_ONE_TON
     }
 
+    data class Gem(
+        override val amount: Fee,
+        override val fiatAmount: Coins,
+        override val fiatCurrency: WalletCurrency,
+        val index: Int,
+    ) : SendFee(), TokenFee
+
 }

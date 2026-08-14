@@ -3,7 +3,6 @@ package com.tonapps.tonkeeper.ui.screen.init
 import android.os.Bundle
 import com.tonapps.blockchain.ton.extensions.base64
 import com.tonapps.blockchain.ton.extensions.publicKeyFromBase64
-import com.tonapps.blockchain.ton.extensions.publicKeyFromHex
 import com.tonapps.extensions.getEnum
 import com.tonapps.extensions.getParcelableCompat
 import com.tonapps.extensions.putEnum
@@ -13,6 +12,7 @@ import com.tonapps.blockchain.model.legacy.WalletEntity
 import org.ton.api.pub.PublicKeyEd25519
 import uikit.base.BaseArgs
 
+@Suppress("ClassOrdering")
 data class InitArgs(
     val type: Type,
     val name: String?,
@@ -24,7 +24,7 @@ data class InitArgs(
 ) : BaseArgs() {
 
     enum class Type {
-        New, Import, Watch, Testnet, Signer, SignerQR, Ledger, Keystone, Tetra
+        New, Import, GemNew, GemImport, Watch, Testnet, Signer, SignerQR, Ledger, Keystone, Tetra
     }
 
     private companion object {

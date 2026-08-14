@@ -11,11 +11,11 @@ import com.tonapps.ledger.ton.LedgerConnectData
 import com.tonapps.tonkeeper.ui.screen.init.list.AccountItem
 import com.tonapps.wallet.api.entity.AccountDetailsEntity
 import com.tonapps.blockchain.model.legacy.Wallet
-import com.tonapps.blockchain.model.legacy.WalletType
 import com.tonapps.blockchain.model.legacy.WalletEntity
 import kotlinx.coroutines.flow.filterNotNull
 import org.ton.api.pub.PublicKeyEd25519
 
+@Suppress("ClassOrdering")
 class InitModelState(private val savedStateHandle: SavedStateHandle) {
 
     data class PublicKey(
@@ -67,6 +67,11 @@ class InitModelState(private val savedStateHandle: SavedStateHandle) {
     var mnemonic: List<String>?
         get() = savedStateHandle[MNEMONIC_KEY]
         set(value) = savedStateHandle.set(MNEMONIC_KEY, value)
+
+    fun clearGemSensitiveState() {
+        savedStateHandle.remove<String>(MNEMONIC_KEY)
+        savedStateHandle.remove<String>(PASSCODE_KEY)
+    }
 
     var accounts: List<AccountItem>?
         get() = savedStateHandle[ACCOUNTS]

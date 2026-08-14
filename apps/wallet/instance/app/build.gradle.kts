@@ -14,6 +14,7 @@ android {
 }
 
 dependencies {
+    implementation(projects.gemstone)
     implementation(libs.koin.core)
     implementation(libs.koin.workmanager)
     implementation(libs.kotlinx.datetime)
@@ -37,6 +38,7 @@ dependencies {
     implementation(projects.apps.wallet.api)
 
     implementation(projects.apps.wallet.data.core)
+    implementation(projects.apps.wallet.data.gem)
     implementation(projects.apps.wallet.data.tokens)
     implementation(projects.apps.wallet.data.account)
     implementation(projects.apps.wallet.data.settings)

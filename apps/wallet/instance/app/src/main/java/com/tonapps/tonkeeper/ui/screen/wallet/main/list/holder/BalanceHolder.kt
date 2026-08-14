@@ -36,7 +36,6 @@ import com.tonapps.uikit.color.resolveColor
 import com.tonapps.uikit.color.stateList
 import com.tonapps.uikit.color.textPrimaryColor
 import com.tonapps.uikit.color.textSecondaryColor
-import com.tonapps.blockchain.model.legacy.Wallet
 import com.tonapps.blockchain.model.legacy.WalletType
 import com.tonapps.blockchain.model.legacy.WalletEntity
 import com.tonapps.wallet.data.core.HIDDEN_BALANCE
@@ -215,6 +214,7 @@ class BalanceHolder(
             WalletType.Watch -> builder.badgeOrange(context, Localization.watch_only)
             WalletType.Keystone -> builder.badgePurple(context, Localization.keystone)
             WalletType.Tetra -> builder.badgeOrange(context, Localization.tetra)
+            WalletType.Gem -> builder.badgeDefault(context, Localization.wallet)
             WalletType.Default -> builder
             WalletType.Lockup -> builder
         }

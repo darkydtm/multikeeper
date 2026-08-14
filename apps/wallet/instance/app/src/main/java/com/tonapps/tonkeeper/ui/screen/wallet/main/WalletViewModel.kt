@@ -125,18 +125,20 @@ class WalletViewModel(
 
         requestDnsExpiring()
 
-        collectFlow(transactionManager.eventsFlow(wallet)) { event ->
-            if (event.pending) {
-                setStatus(Status.SendingTransaction)
-            } else {
-                setStatus(Status.TransactionConfirmed)
-                delay(2000)
-                setStatus(Status.Default)
-                _lastLtFlow.value = event.lt
-                _domainRenewFlow.value =
-                    collectiblesRepository.getDnsSoonExpiring(wallet.accountId, wallet.network)
-            }
-        }
+		if (!wallet.isGem) {
+			collectFlow(transactionManager.eventsFlow(wallet)) { event ->
+				if (event.pending) {
+					setStatus(Status.SendingTransaction)
+				} else {
+					setStatus(Status.TransactionConfirmed)
+					delay(2000)
+					setStatus(Status.Default)
+					_lastLtFlow.value = event.lt
+					_domainRenewFlow.value =
+						collectiblesRepository.getDnsSoonExpiring(wallet.accountId, wallet.network)
+				}
+			}
+		}
 
         collectFlow(networkMonitor.isOnlineFlow) { online ->
             if (!online) {
@@ -179,7 +181,7 @@ class WalletViewModel(
             if (localAssets != null) {
                 val batteryBalance = getBatteryBalance(wallet)
                 val banners = getBanners(wallet)
-                val plugins = pluginsRepository.getPlugins(wallet.accountId, wallet.network)
+                val plugins = if (wallet.isGem) emptyList() else pluginsRepository.getPlugins(wallet.accountId, wallet.network)
                 val maxStakingApy = getMaxStakingApy(wallet)
                 val state = State.Main(
                     wallet = wallet,
@@ -213,7 +215,7 @@ class WalletViewModel(
                     val remoteAssets = getAssets(walletCurrency, true)
                     val batteryBalance = getBatteryBalance(wallet, true)
                     val banners = getBanners(wallet, true)
-                    val plugins = pluginsRepository.getPlugins(wallet.accountId, wallet.network, true)
+                    val plugins = if (wallet.isGem) emptyList() else pluginsRepository.getPlugins(wallet.accountId, wallet.network, true)
                     val maxStakingApy = getMaxStakingApy(wallet, ignoreCache = true)
                     if (remoteAssets != null) {
                         val state = State.Main(
@@ -267,7 +269,9 @@ class WalletViewModel(
             }*/
 
             val isSetupHidden = settingsRepository.isSetupHidden(state.wallet.id)
-            val uiSetup: State.Setup? = if (isSetupHidden) null else {
+            val uiSetup: State.Setup? = if (isSetupHidden) {
+                null
+            } else {
                 val walletPushEnabled = settingsRepository.getPushWallet(state.wallet.id)
                 val hasInitializedWallet = accountRepository.getInitializedWallets().isNotEmpty()
                 State.Setup(
@@ -327,6 +331,7 @@ class WalletViewModel(
     }
 
     private fun requestDnsExpiring() {
+        if (wallet.isGem) return
         viewModelScope.launch {
             val period = if (DevSettings.dnsAll) 366 else 30
             _domainRenewFlow.value =
@@ -356,6 +361,7 @@ class WalletViewModel(
         wallet: WalletEntity,
         ignoreCache: Boolean = false,
     ): List<BannerEntity> = withContext(Dispatchers.IO) {
+        if (wallet.isGem) return@withContext emptyList()
         bannerRepository.getBanners(
             walletId = wallet.id,
             network = wallet.network,
@@ -389,7 +395,7 @@ class WalletViewModel(
         wallet: WalletEntity,
         ignoreCache: Boolean = false,
     ): String? = withContext(Dispatchers.IO) {
-        if (wallet.testnet) return@withContext null
+        if (wallet.testnet || wallet.isGem) return@withContext null
         try {
             val staking = stakingRepository.get(
                 accountId = wallet.accountId,
@@ -400,7 +406,8 @@ class WalletViewModel(
             val enabledStaking = api.getConfig(wallet.network).enabledStaking
             val maxApy = staking.pools
                 .filter { enabledStaking.contains(it.implementation.title) }
-                .maxOfOrNull { it.apy } ?: return@withContext null
+                .maxOfOrNull { it.apy }
+                ?: return@withContext null
             CurrencyFormatter.formatPercent(maxApy).toString()
         } catch (e: Throwable) {
             null
@@ -411,7 +418,7 @@ class WalletViewModel(
         wallet: WalletEntity,
         ignoreCache: Boolean = false
     ): Coins = withContext(Dispatchers.IO) {
-        if (wallet.hasPrivateKey) {
+        if (wallet.hasPrivateKey && !wallet.isGem) {
             val tonProofToken =
                 accountRepository.requestTonProofToken(wallet) ?: return@withContext Coins.ZERO
             val battery = batteryRepository.getBalance(
@@ -435,7 +442,7 @@ class WalletViewModel(
                 currency = currency,
                 list = it.sort(wallet, settingsRepository),
                 fromCache = !refresh,
-                rates = ratesRepository.getTONRates(wallet.network, currency)
+                 rates = ratesRepository.getTONRates(wallet.network, currency)
             )
         }
     }

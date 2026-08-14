@@ -51,6 +51,7 @@ class TokenHolder(
         val icon = when (blockchain) {
             Blockchain.TON -> UIKitIcon.ic_ton
             Blockchain.TRON -> R.drawable.ic_tron
+            Blockchain.GEM -> UIKitIcon.ic_wallet_28
         }
 
         networkIconView.setLocalRes(icon)

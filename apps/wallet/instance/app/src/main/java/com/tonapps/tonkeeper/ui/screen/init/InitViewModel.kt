@@ -17,6 +17,7 @@ import com.tonapps.blockchain.ton.extensions.EmptyPrivateKeyEd25519
 import com.tonapps.blockchain.ton.extensions.toAccountId
 import com.tonapps.blockchain.ton.extensions.toRawAddress
 import com.tonapps.blockchain.ton.extensions.toWalletAddress
+import com.tonapps.blockchain.model.legacy.WalletAccount
 import com.tonapps.bus.core.AnalyticsHelper
 import com.tonapps.emoji.Emoji
 import com.tonapps.extensions.MutableEffectFlow
@@ -45,6 +46,10 @@ import com.tonapps.wallet.data.passcode.PasscodeManager
 import com.tonapps.wallet.data.rn.RNLegacy
 import com.tonapps.wallet.data.settings.SafeModeState
 import com.tonapps.wallet.data.settings.SettingsRepository
+import com.tonapps.wallet.data.gem.GemRuntimeCoordinator
+import com.tonapps.wallet.data.gem.GemWalletBridge
+import com.tonapps.wallet.data.gem.GemWallet
+import com.tonapps.wallet.data.gem.GemWalletLabel
 import com.tonapps.wallet.localization.Localization
 import io.tonapi.models.AccountStatus
 import kotlinx.coroutines.Dispatchers
@@ -79,6 +84,8 @@ class InitViewModel(
     private val settingsRepository: SettingsRepository,
     private val environment: Environment,
     private val analytics: AnalyticsHelper,
+    private val gemWalletBridge: GemWalletBridge,
+    private val gemRuntimeCoordinator: GemRuntimeCoordinator,
     savedStateHandle: SavedStateHandle
 ) : BaseWalletVM(app) {
 
@@ -93,8 +100,16 @@ class InitViewModel(
     private val type = args.type
     private val testnet: Boolean = type == InitArgs.Type.Testnet
     private val tetra: Boolean = type == InitArgs.Type.Tetra
+    private val gem: Boolean = type == InitArgs.Type.GemNew || type == InitArgs.Type.GemImport
+    private val gemNew: Boolean = type == InitArgs.Type.GemNew
     private val walletsCount = AtomicInteger(-1)
+    private var gemMnemonic: List<String>? = null
+    private var gemPasscode: String? = null
+    private var gemWallet: GemWallet? = null
     val watchRecoveryAccountId = args.watchRecoveryAccountId
+
+    val isGemFlow: Boolean
+        get() = gem
 
     private val walletLabelHelper: WalletLabelHelper by lazy {
         WalletLabelHelper(context)
@@ -139,7 +154,7 @@ class InitViewModel(
     private val isPinSet = AtomicBoolean(false)
 
     private val requestSetPinCode: Boolean
-        get() = (type == InitArgs.Type.New || type == InitArgs.Type.Import || type == InitArgs.Type.Testnet || type == InitArgs.Type.Tetra) && !isPinSet.get()
+        get() = (type == InitArgs.Type.New || type == InitArgs.Type.Import || type == InitArgs.Type.GemNew || type == InitArgs.Type.GemImport || type == InitArgs.Type.Testnet || type == InitArgs.Type.Tetra) && !isPinSet.get()
 
     var wordsCount: Int
         get() = savedState.wordsCount
@@ -148,6 +163,10 @@ class InitViewModel(
         }
 
     init {
+		if (gem) {
+			savedState.clearGemSensitiveState()
+		}
+		savedState.wordsCount = if (gem) 12 else savedState.wordsCount
         savedState.publicKey = args.publicKey?.let {
             InitModelState.PublicKey(publicKey = it)
         }
@@ -181,6 +200,7 @@ class InitViewModel(
         when (type) {
             InitArgs.Type.Watch -> routeTo(InitRoute.WatchAccount)
             InitArgs.Type.Import, InitArgs.Type.Testnet, InitArgs.Type.Tetra -> routeTo(InitRoute.ImportWords)
+			InitArgs.Type.GemImport -> routeTo(InitRoute.ImportWords)
             InitArgs.Type.Signer, InitArgs.Type.SignerQR -> resolveWallets(savedState.publicKey!!)
             InitArgs.Type.Ledger -> routeTo(InitRoute.SelectAccount)
             InitArgs.Type.Keystone -> {
@@ -199,6 +219,13 @@ class InitViewModel(
                     routeTo(InitRoute.BackupStart)
                 }
             }
+			InitArgs.Type.GemNew -> {
+				if (requestSetPinCode) {
+					routeTo(InitRoute.CreatePasscode)
+				} else {
+					routeTo(InitRoute.BackupStart)
+				}
+			}
         }
     }
 
@@ -207,7 +234,15 @@ class InitViewModel(
         setLoading(false)
     }
 
-    fun getMnemonic(): List<String>? = savedState.mnemonic
+    fun getMnemonic(): List<String>? = if (gem) gemMnemonic else savedState.mnemonic
+
+    fun parseMnemonic(value: String): List<String> = value
+        .trim()
+        .split(Regex("\\s+"))
+        .filter(String::isNotBlank)
+
+    fun suggestMnemonicWords(query: String): List<String> =
+        gemWalletBridge.suggestMnemonicWords(query)
 
     fun navigateToBackupPhrase() {
         viewModelScope.launch {
@@ -222,6 +257,10 @@ class InitViewModel(
 
     fun completeBackup(done: Boolean = true) {
         savedState.backupDone = done
+		if (gem) {
+			routeTo(InitRoute.LabelAccount)
+			return
+		}
         if (environment.isGooglePlayServicesAvailable) {
             routeTo(InitRoute.Push)
         } else {
@@ -237,6 +276,10 @@ class InitViewModel(
     }
 
     fun enablePush(enable: Boolean) {
+		if (gem) {
+			routeTo(InitRoute.LabelAccount)
+			return
+		}
         savedState.enablePush = enable
         routeTo(InitRoute.LabelAccount)
     }
@@ -274,21 +317,25 @@ class InitViewModel(
     }
 
     fun setPasscode(passcode: String) {
-        savedState.passcode = passcode
+		if (gem) {
+			gemPasscode = passcode
+		} else {
+			savedState.passcode = passcode
+		}
 
         routeTo(InitRoute.ReEnterPasscode)
     }
 
     fun reEnterPasscode(passcode: String) {
-        val valid = savedState.passcode == passcode
+		val valid = (if (gem) gemPasscode else savedState.passcode) == passcode
         if (!valid) {
             routePopBackStack()
         } else if (watchRecoveryAccountId != null) {
             execute(context)
         } else {
-            if (type == InitArgs.Type.New) {
+            if (type == InitArgs.Type.New || gemNew) {
                 routeTo(InitRoute.BackupStart)
-            } else if (environment.isGooglePlayServicesAvailable) {
+            } else if (!gem && environment.isGooglePlayServicesAvailable) {
                 routeTo(InitRoute.Push)
             } else {
                 routeTo(InitRoute.LabelAccount)
@@ -296,7 +343,24 @@ class InitViewModel(
         }
     }
 
-    suspend fun setMnemonic(words: List<String>): Boolean {
+	 suspend fun setMnemonic(words: List<String>): Boolean {
+		if (gem) {
+			if (words.size != 12) {
+				clearGemMnemonic()
+				return false
+			}
+			if (!gemWalletBridge.isValidMnemonic(words)) {
+				clearGemMnemonic()
+				return false
+			}
+			gemMnemonic = words.toList()
+			if (requestSetPinCode) {
+				routeTo(InitRoute.CreatePasscode)
+			} else {
+				routeTo(InitRoute.LabelAccount)
+			}
+			return true
+		}
         if (resolveWallets(words)) {
             savedState.mnemonic = words
             return true
@@ -514,6 +578,9 @@ class InitViewModel(
     }
 
     private suspend fun getDefaultWalletName(): String {
+		if (gem) {
+			return getString(Localization.wallet)
+		}
         val count = getWalletsCount()
         return if (count == 0 && type == InitArgs.Type.New) {
             getString(Localization.app_name)
@@ -616,6 +683,10 @@ class InitViewModel(
 
     private fun execute(context: Context) {
         setLoading(true)
+		if (gem) {
+			executeGem(context)
+			return
+		}
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -676,6 +747,98 @@ class InitViewModel(
         }
     }
 
+	private fun executeGem(context: Context) {
+		viewModelScope.launch(Dispatchers.IO) {
+			var pinAttempted = false
+			try {
+				val words = gemMnemonic ?: throw IllegalStateException("Mnemonic is not set")
+				if (words.size != 12) {
+					throw IllegalArgumentException("Gem mnemonic must contain exactly 12 words")
+				}
+				val requiresPin = requestSetPinCode
+				if (!requiresPin && !passcodeManager.confirmation(context, context.getString(Localization.app_name))) {
+					setLoading(false)
+					return@launch
+				}
+				val label = getLabel()
+				val wallet = (gemWallet ?: gemWalletBridge.importMnemonic(words).also { gemWallet = it }).copy(
+					label = GemWalletLabel(label.name, label.emoji.toString(), label.color),
+				)
+                val walletEntity = wallet.toTonkeeperWallet()
+                accountRepository.addGemWallet(walletEntity)
+                gemRuntimeCoordinator.persistWallet(wallet)
+				if (requiresPin) {
+					pinAttempted = true
+					passcodeManager.save(gemPasscode ?: throw IllegalStateException("Passcode is not set"))
+					if (!passcodeManager.hasPinCode()) {
+						throw IllegalStateException("Failed to save passcode")
+					}
+					isPinSet.set(true)
+				}
+				gemRuntimeCoordinator.refreshSubscriptions().getOrThrow()
+				clearGemSensitiveState()
+				withContext(Dispatchers.Main) { finish() }
+			} catch (e: Throwable) {
+				val persistedWallet = gemWallet
+				if (persistedWallet != null) {
+					try {
+						rollbackGemPersistence(persistedWallet, pinAttempted)
+					} catch (rollbackError: Throwable) {
+						context.logError(rollbackError)
+					}
+				}
+				gemWallet = null
+				context.logError(e)
+				setLoading(false)
+			}
+		}
+	}
+
+	private suspend fun rollbackGemPersistence(wallet: GemWallet, resetPasscode: Boolean) {
+		var rollbackError: Throwable? = null
+		if (resetPasscode) {
+			try {
+				passcodeManager.reset()
+			} catch (error: Throwable) {
+				rollbackError = error
+			}
+		}
+		try {
+			accountRepository.deleteGemWallet(wallet.walletId.value)
+		} catch (error: Throwable) {
+			rollbackError = rollbackError ?: error
+		}
+		try {
+			gemRuntimeCoordinator.deleteWallet(wallet)
+		} catch (error: Throwable) {
+			rollbackError = rollbackError ?: error
+		}
+		rollbackError?.let { throw IllegalStateException("Failed to rollback Gem onboarding", it) }
+	}
+
+	private fun GemWallet.toTonkeeperWallet(): WalletEntity = WalletEntity(
+		id = walletId.value,
+		publicKey = EmptyPrivateKeyEd25519.publicKey(),
+		type = WalletType.Gem,
+		version = WalletVersion.V5R1,
+		label = Wallet.Label(
+			name = label?.name.orEmpty(),
+			emoji = label?.emoji.orEmpty(),
+			color = label?.color ?: 0,
+		),
+		initialized = true,
+		accounts = accounts.map { account ->
+			WalletAccount(
+				chain = account.chain.key,
+				address = account.address,
+				publicKey = account.publicKey,
+				derivationPath = account.derivationPath,
+			)
+		},
+		keystoreId = keystoreId,
+	)
+
+
     private suspend fun buildNewLabel(accounts: List<SimpleAccount>): Wallet.NewLabel {
         val versions = accounts.map { it.version }
         val walletsCount = getWalletsCount()
@@ -729,8 +892,18 @@ class InitViewModel(
         return accountRepository.addWatchWallet(label, publicKey, account.walletVersion)
     }
 
-    private suspend fun generateNewWallet() = withContext(Dispatchers.IO) {
+	private suspend fun generateNewWallet() = withContext(Dispatchers.IO) {
         setLoading(true)
+		if (gemNew) {
+			gemMnemonic = gemWalletBridge.createMnemonicWords().toList()
+			setLabel(
+				name = getDefaultWalletName(),
+				emoji = Emoji.WALLET_ICON,
+				color = WalletColor.all.first()
+			)
+			setLoading(false)
+			return@withContext
+		}
         AndroidSecureRandom.seed(entropyHelper.getSeed(512))
         val mnemonic = Mnemonic.generate(random = AndroidSecureRandom)
         savedState.mnemonic = mnemonic
@@ -944,9 +1117,27 @@ class InitViewModel(
     }
 
     override fun onCleared() {
+		clearGemSensitiveState()
         super.onCleared()
         entropyHelper.stop()
     }
+
+	private fun clearGemMnemonic() {
+		if (gem) {
+			gemMnemonic = null
+			gemPasscode = null
+			savedState.clearGemSensitiveState()
+		}
+	}
+
+	private fun clearGemSensitiveState() {
+		if (gem) {
+			gemMnemonic = null
+			gemPasscode = null
+			gemWallet = null
+			savedState.clearGemSensitiveState()
+		}
+	}
 
     private data class SimpleAccount(
         val name: String? = null,

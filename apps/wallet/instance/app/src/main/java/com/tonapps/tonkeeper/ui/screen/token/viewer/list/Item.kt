@@ -43,6 +43,7 @@ sealed class Item(type: Int): BaseListItem(type) {
         val networkIconRes: Int
             get() = when (blockchain) {
                 Blockchain.TRON -> R.drawable.ic_tron
+                Blockchain.GEM -> UIKitIcon.ic_wallet_28
                 else -> UIKitIcon.ic_ton
             }
     }
