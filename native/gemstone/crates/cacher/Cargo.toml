@@ -1,0 +1,12 @@
+[package]
+name = "cacher"
+edition = { workspace = true }
+version = { workspace = true }
+
+[dependencies]
+redis = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

@@ -36,7 +36,7 @@ rootProject.name = "Tonkeeper"
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 include(":gemstone")
-project(":gemstone").projectDir = file("gem-wallet/wallet/android/gemstone")
+project(":gemstone").projectDir = file("native/gemstone/android")
 
 include(
     ":apps:signer",

@@ -1,0 +1,13 @@
+{
+  "blockbook": {
+    "coin": "Zcash",
+    "network": "ZEC",
+    "inSync": true,
+    "bestHeight": 2700000
+  },
+  "backend": {
+    "consensus": {
+      "chaintip": "c2d6d0b4"
+    }
+  }
+}

@@ -1,0 +1,142 @@
+[workspace.package]
+version = "2.114.6"
+edition = "2024"
+license = "MIT"
+homepage = "https://gemwallet.com/"
+description = "Gem Wallet Core library in Rust"
+repository = "https://github.com/gemwalletcom/wallet"
+documentation = "https://github.com/gemwalletcom"
+
+[workspace]
+resolver = "3"
+members = [
+    "bin/uniffi-bindgen",
+
+    "gemstone",
+
+    "crates/primitives",
+    "crates/fiat",
+    "crates/cacher",
+    "crates/name_resolver",
+    "crates/api_connector",
+    "crates/lists",
+    "crates/settings",
+    "crates/settings_chain",
+    "crates/pricer",
+    "crates/chain_primitives",
+    "crates/chain_traits",
+
+    "crates/security_*",
+    "crates/gem_*",
+    "crates/signer",
+    "crates/simulation",
+
+    "crates/localizer",
+    "crates/coinmarketcap",
+    "crates/jupiter",
+    "crates/job_runner",
+    "crates/metrics",
+    "crates/search_index",
+    "crates/defi",
+    "crates/nft",
+    "crates/in_app_notifications",
+    "crates/serde_serializers",
+    "crates/number_formatter",
+    "crates/prices",
+    "crates/portfolio",
+    "crates/streamer",
+    "crates/swapper",
+    "crates/tracing",
+    "crates/support",
+    "crates/yielder",
+]
+
+[workspace.dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+serde_urlencoded = { version = "0.7.1" }
+
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+reqwest = { version = "0.13.4", features = [
+    "json",
+    "gzip",
+    "brotli",
+    "deflate",
+    "http2",
+    "query",
+] }
+
+url = { version = "2.5.8" }
+percent-encoding = { version = "2.3.2" }
+config = { version = "0.15.25", features = ["yaml"] }
+rocket = { version = "0.5.1", features = ["json"] }
+rocket_ws = { version = "0.1.1" }
+
+async-trait = { version = "0.1.91" }
+prometheus-client = { version = "0.25.0" }
+futures = { version = "0.3.33" }
+uuid = { version = "1.24.0", features = ["v4", "v5"] }
+tracing = { version = "0.1.44" }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+# db
+redis = { version = "1.4.1", default-features = false, features = [
+    "tokio-comp",
+    "connection-manager",
+] }
+r2d2 = { version = "0.8.10" }
+chrono = { version = "0.4.45", features = ["serde"] }
+
+# crypto
+base64 = { version = "0.23.0" }
+bech32 = { version = "0.12.0" }
+bitcoin = { version = "0.32.102" }
+bitcoincash-addr = { version = "0.5.2" }
+blake2b_simd = { version = "1.0.4" }
+bs58 = { version = "0.5.1", features = ["check"] }
+getrandom = { version = "0.4.3" }
+hex = { version = "0.4.3" }
+crc = { version = "3.4.0" }
+num-bigint = { version = "0.5.1", features = ["std", "serde"] }
+num-traits = { version = "0.2.19" }
+num-integer = { version = "0.1.46" }
+bigdecimal = "0.4.10"
+hmac = { version = "0.13.0" }
+sha2 = { version = "0.11.0" }
+sha3 = { version = "0.12.0" }
+ripemd = { version = "0.2.0" }
+zeroize = { version = "1.9.0" }
+ring = { version = "0.17.14", features = ["std"] }
+aes-gcm = { version = "0.11.0", default-features = false, features = ["aes", "alloc"] }
+rand = { version = "0.10.2" }
+strum = { version = "0.28.0", features = ["derive"] }
+curve25519-dalek = { version = "5.0.0" }
+ed25519-dalek = { version = "3.0.0" }
+borsh = { version = "1.8.0", features = ["derive"] }
+bcs = { version = "0.2.1" }
+pem-rfc7468 = { version = "1.0.0", features = ["std"] }
+sui-types = { package = "sui-sdk-types", version = "0.3.2", features = [
+    "hash",
+    "serde",
+] }
+k256 = { version = "0.14.0", features = ["ecdsa", "sha256"] }
+bip39 = { version = "2.2.2", default-features = false }
+
+uniffi = { version = "0.32.0" }
+regex = { version = "1.13.1" }
+
+alloy-primitives = { version = "1.6.1", features = ["k256"] }
+alloy-sol-types = { version = "1.6.1", features = ["eip712-serde"] }
+alloy-dyn-abi = { version = "1.6.1", features = ["eip712"] }
+alloy-json-abi = { version = "1.6.1" }
+alloy-signer = { version = "2.2.0" }
+alloy-signer-local = { version = "2.2.0" }
+alloy-network = { version = "2.2.0" }
+alloy-consensus = { version = "2.2.0" }
+jsonwebtoken = { version = "11.0.0", features = ["aws_lc_rs"] }
+
+[profile.dev]
+debug = 0
+
+[profile.dev.package.argon2]
+opt-level = 3

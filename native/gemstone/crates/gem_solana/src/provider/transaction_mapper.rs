@@ -1,0 +1,645 @@
+use chrono::DateTime;
+use num_bigint::{BigUint, Sign};
+
+use crate::{
+    COMPUTE_BUDGET_PROGRAM_ID, JUPITER_PROGRAM_ID, METAPLEX_CORE_PROGRAM, METAPLEX_PROGRAM, OKX_DEX_V2_PROGRAM_ID, SYSTEM_PROGRAM_ID, SYSTEM_PROGRAMS, TOKEN_PROGRAM,
+    TOKEN_PROGRAM_2022,
+    models::{BlockTransaction, BlockTransactions},
+};
+use primitives::{AssetId, Chain, NFTAssetId, SwapProvider, Transaction, TransactionNFTTransferMetadata, TransactionState, TransactionSwapMetadata, TransactionType};
+
+const CHAIN: Chain = Chain::Solana;
+const SWAP_PROGRAMS: &[(SwapProvider, &str)] = &[(SwapProvider::Jupiter, JUPITER_PROGRAM_ID), (SwapProvider::Okx, OKX_DEX_V2_PROGRAM_ID)];
+const MPL_CORE_TRANSFER_V1: u8 = 14;
+const MPL_TOKEN_METADATA_TRANSFER_V1: u8 = 49;
+const MPL_TOKEN_METADATA_MINT_ACCOUNT_INDEX: usize = 4;
+const SPL_TRANSFER_CHECKED: u8 = 12;
+const SPL_TRANSFER_CHECKED_MINT_ACCOUNT_INDEX: usize = 1;
+
+struct MetaplexCoreNftTransfer {
+    sender: String,
+    new_owner: String,
+    asset: String,
+    collection: String,
+}
+
+fn map_metaplex_core_nft_transfer(transaction: &BlockTransaction, account_keys: &[String]) -> Option<MetaplexCoreNftTransfer> {
+    if !account_keys.iter().any(|key| key == METAPLEX_CORE_PROGRAM) {
+        return None;
+    }
+    let instruction = transaction
+        .transaction
+        .message
+        .instructions
+        .iter()
+        .find(|ix| account_keys.get(ix.program_id_index).map(String::as_str) == Some(METAPLEX_CORE_PROGRAM))?;
+    let data = bs58::decode(&instruction.data).into_vec().ok()?;
+    if data.first().copied() != Some(MPL_CORE_TRANSFER_V1) {
+        return None;
+    }
+    let resolve = |position: usize| account_keys.get(*instruction.accounts.get(position)? as usize).cloned();
+    Some(MetaplexCoreNftTransfer {
+        asset: resolve(0)?,
+        collection: resolve(1)?,
+        sender: resolve(2)?,
+        new_owner: resolve(4)?,
+    })
+}
+
+fn is_nft_token_transfer(transaction: &BlockTransaction, account_keys: &[String], token_id: &str, value: &BigUint) -> bool {
+    if value != &BigUint::from(1u8) {
+        return false;
+    }
+    if !transaction
+        .meta
+        .pre_token_balances
+        .iter()
+        .chain(transaction.meta.post_token_balances.iter())
+        .all(|balance| balance.ui_token_amount.decimals == 0)
+    {
+        return false;
+    }
+
+    transaction.transaction.message.instructions.iter().any(|instruction| {
+        let Some(program) = account_keys.get(instruction.program_id_index).map(String::as_str) else {
+            return false;
+        };
+        let mint_account_index = if program == METAPLEX_PROGRAM {
+            MPL_TOKEN_METADATA_MINT_ACCOUNT_INDEX
+        } else if program == TOKEN_PROGRAM || program == TOKEN_PROGRAM_2022 {
+            SPL_TRANSFER_CHECKED_MINT_ACCOUNT_INDEX
+        } else {
+            return false;
+        };
+        let Some(mint) = instruction.accounts.get(mint_account_index).and_then(|index| account_keys.get(*index as usize)) else {
+            return false;
+        };
+        if mint != token_id {
+            return false;
+        }
+        let Ok(data) = bs58::decode(&instruction.data).into_vec() else {
+            return false;
+        };
+        if program == METAPLEX_PROGRAM {
+            data.first().copied() == Some(MPL_TOKEN_METADATA_TRANSFER_V1)
+        } else {
+            let [instruction, amount @ .., decimals] = data.as_slice() else {
+                return false;
+            };
+            if *instruction != SPL_TRANSFER_CHECKED || *decimals != 0 {
+                return false;
+            }
+            let Ok(amount) = <[u8; 8]>::try_from(amount) else {
+                return false;
+            };
+            u64::from_le_bytes(amount) == 1
+        }
+    })
+}
+
+fn get_swap_provider(account_keys: &[String]) -> Option<(SwapProvider, &'static str)> {
+    SWAP_PROGRAMS.iter().copied().find(|(_, program_id)| account_keys.iter().any(|key| key == program_id))
+}
+
+fn map_swap_metadata(transaction: &BlockTransaction, owner: &str, provider: SwapProvider) -> Option<TransactionSwapMetadata> {
+    let balance_changes = transaction.get_balance_changes_by_owner(owner);
+    let token_balance_changes = transaction.meta.get_token_balance_changes_by_owner(owner);
+
+    let (from_asset, from_value, to_asset, to_value) = match token_balance_changes.as_slice() {
+        [change] => {
+            let (from, to) = match change.amount.sign() {
+                Sign::Plus => (&balance_changes, change),
+                Sign::Minus => (change, &balance_changes),
+                Sign::NoSign => return None,
+            };
+            (from.asset_id.clone(), from.amount.magnitude().clone(), to.asset_id.clone(), to.amount.magnitude().clone())
+        }
+        [a, b] => {
+            let (from, to) = match a.amount.sign() {
+                Sign::Plus => (b, a),
+                Sign::Minus => (a, b),
+                Sign::NoSign => return None,
+            };
+            (from.asset_id.clone(), from.amount.magnitude().clone(), to.asset_id.clone(), to.amount.magnitude().clone())
+        }
+        _ => return None,
+    };
+
+    Some(TransactionSwapMetadata {
+        from_asset,
+        from_value: from_value.to_string(),
+        to_asset,
+        to_value: to_value.to_string(),
+        provider: Some(provider.id().to_owned()),
+    })
+}
+
+pub fn map_block_transactions(transactions: &BlockTransactions) -> Vec<primitives::Transaction> {
+    transactions
+        .transactions
+        .iter()
+        .filter_map(|transaction| map_transaction(transaction, transactions.block_time))
+        .collect()
+}
+
+pub fn map_transaction(transaction: &BlockTransaction, block_time: i64) -> Option<primitives::Transaction> {
+    // reject multi-sig transactions (3+), but allow fee-payer pattern (2 signatures)
+    if transaction.transaction.signatures.len() > 2 {
+        return None;
+    }
+
+    let chain = CHAIN;
+    let account_keys = &transaction.transaction.message.account_keys;
+    let hash = transaction.transaction.signatures.first()?.to_string();
+    let fee = transaction.meta.fee;
+    let state = if transaction.meta.has_error() {
+        TransactionState::Reverted
+    } else {
+        TransactionState::Confirmed
+    };
+    let fee_asset_id = chain.as_asset_id();
+    let created_at = DateTime::from_timestamp(block_time, 0)?;
+
+    if (account_keys.len() == 3 && account_keys.last()? == SYSTEM_PROGRAM_ID)
+        || (account_keys.len() == 4 && account_keys.iter().any(|key| key == SYSTEM_PROGRAM_ID) && account_keys.iter().any(|key| key == COMPUTE_BUDGET_PROGRAM_ID))
+    {
+        let from = account_keys.first()?.clone();
+        let to = account_keys.get(1)?.clone();
+        let value = transaction.get_balance_change(&from);
+
+        let transaction = Transaction::new(
+            hash,
+            chain.as_asset_id(),
+            from,
+            to,
+            None,
+            TransactionType::Transfer,
+            state,
+            fee.to_string(),
+            fee_asset_id,
+            value.to_string(),
+            None,
+            None,
+            created_at,
+        );
+        return Some(transaction);
+    }
+
+    let pre_token_balances = &transaction.meta.pre_token_balances;
+    let post_token_balances = &transaction.meta.post_token_balances;
+
+    // SPL token transfer (regular tokens or NFTs that go through the SPL Token program).
+    if let Some(first_balance) = pre_token_balances.first() {
+        let token_id = &first_balance.mint;
+        if account_keys.iter().any(|key| key == TOKEN_PROGRAM || key == TOKEN_PROGRAM_2022)
+            && (pre_token_balances.len() == 1 || pre_token_balances.len() == 2)
+            && post_token_balances.len() == 2
+            && pre_token_balances.iter().all(|b| &b.mint == token_id)
+            && post_token_balances.iter().all(|b| &b.mint == token_id)
+        {
+            let sender_account_index: i64 = if transaction.meta.pre_token_balances.len() == 1 {
+                transaction.meta.pre_token_balances.first()?.account_index
+            } else if pre_token_balances.first()?.get_amount() >= post_token_balances.first()?.get_amount() {
+                pre_token_balances.first()?.account_index
+            } else {
+                post_token_balances.last()?.account_index
+            };
+            let recipient_account_index = post_token_balances.iter().find(|b| b.account_index != sender_account_index)?.account_index;
+
+            let sender = transaction.meta.get_post_token_balance(sender_account_index)?;
+            let recipient = transaction.meta.get_post_token_balance(recipient_account_index)?;
+            let from_value = transaction.meta.get_pre_token_balance(sender_account_index)?.get_amount();
+            let to_value = transaction.meta.get_post_token_balance(sender_account_index)?.get_amount();
+
+            if to_value > from_value {
+                return None;
+            }
+            let value = from_value - to_value;
+            let from = sender.owner.clone();
+            let to = recipient.owner.clone();
+
+            let is_nft = is_nft_token_transfer(transaction, account_keys, token_id, &value);
+            let (transaction_type, asset_id, metadata) = if is_nft {
+                let metadata = TransactionNFTTransferMetadata::from_asset_id(NFTAssetId::new(chain, token_id, token_id));
+                (TransactionType::TransferNFT, chain.as_asset_id(), serde_json::to_value(metadata).ok())
+            } else {
+                (
+                    TransactionType::Transfer,
+                    AssetId {
+                        chain,
+                        token_id: Some(token_id.clone()),
+                    },
+                    None,
+                )
+            };
+
+            let transaction = Transaction::new(
+                hash,
+                asset_id,
+                from,
+                to,
+                None,
+                transaction_type,
+                state,
+                fee.to_string(),
+                fee_asset_id,
+                value.to_string(),
+                None,
+                metadata,
+                created_at,
+            );
+            return Some(transaction);
+        }
+    }
+
+    // Metaplex Core NFT transfer (single instruction, no SPL token balances).
+    if let Some(nft) = map_metaplex_core_nft_transfer(transaction, account_keys) {
+        let metadata = TransactionNFTTransferMetadata::from_asset_id(NFTAssetId::new(chain, &nft.collection, &nft.asset));
+        return Some(Transaction::new(
+            hash,
+            chain.as_asset_id(),
+            nft.sender,
+            nft.new_owner,
+            None,
+            TransactionType::TransferNFT,
+            state,
+            fee.to_string(),
+            fee_asset_id,
+            "0".to_string(),
+            None,
+            serde_json::to_value(metadata).ok(),
+            created_at,
+        ));
+    }
+
+    if let Some((provider, program_id)) = get_swap_provider(account_keys) {
+        let sender = account_keys.first()?.clone();
+        let swap = map_swap_metadata(transaction, &sender, provider)?;
+
+        let transaction = Transaction::new(
+            hash.clone(),
+            swap.from_asset.clone(),
+            sender.clone(),
+            sender.clone(),
+            Some(program_id.to_string()),
+            TransactionType::Swap,
+            state,
+            fee.to_string(),
+            chain.as_asset_id(),
+            swap.from_value.clone(),
+            None,
+            serde_json::to_value(swap).ok(),
+            created_at,
+        );
+        return Some(transaction);
+    }
+
+    // smart contract call
+    let contract = transaction
+        .transaction
+        .message
+        .instructions
+        .iter()
+        .map(|ix| &account_keys[ix.program_id_index])
+        .find(|key| !SYSTEM_PROGRAMS.contains(&key.as_str()))?;
+    let sender = account_keys.first()?.clone();
+    let value = transaction.get_balance_change(&sender);
+
+    Some(Transaction::new(
+        hash,
+        chain.as_asset_id(),
+        sender.clone(),
+        sender,
+        Some(contract.to_string()),
+        TransactionType::SmartContractCall,
+        state,
+        fee.to_string(),
+        fee_asset_id,
+        value.to_string(),
+        None,
+        None,
+        created_at,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use crate::provider::testkit::TEST_TRANSACTION_ID;
+    use crate::{
+        PYUSD_TOKEN_MINT, USDT_TOKEN_MINT,
+        models::{SingleTransaction, SolanaTransaction},
+    };
+    use gem_jsonrpc::types::JsonRpcErrorResponse;
+    use primitives::{JsonRpcResult, asset_constants::SOLANA_USDC_ASSET_ID};
+
+    const SPL_NFT_MINT: &str = "4umMdShNxbdnoV2EZjUp6h5GYYneZFLH9otBEU2K3ZYP";
+    const PNFT_MINT: &str = "HP82kPNXnQcozjDrV4dLYfV6wwABQDMVPJXezDbZXHEy";
+    const CORE_ASSET: &str = "JATWmjADckr2M7TX5xMfo1HNfYS66DKot15fJ4hVLrVE";
+    const CORE_COLLECTION: &str = "5pQfZttNUtaj8sySRY9RsdtB81aEAQDh2vnacpxiwTpT";
+
+    fn map_single_transaction(payload: &str) -> primitives::Transaction {
+        let result: JsonRpcResult<SingleTransaction> = serde_json::from_str(payload).unwrap();
+        let block_transaction = BlockTransaction {
+            meta: result.result.meta,
+            transaction: result.result.transaction,
+        };
+        map_transaction(&block_transaction, result.result.block_time).unwrap()
+    }
+
+    #[test]
+    fn test_transaction_nft_spl_token_transfer() {
+        let transaction = map_single_transaction(include_str!("../../testdata/nft_spl_token_transfer.json"));
+
+        assert_eq!(transaction.transaction_type, TransactionType::TransferNFT);
+        assert_eq!(transaction.asset_id, Chain::Solana.as_asset_id());
+        assert_eq!(transaction.from, "2k5AXX4guW9XwRQ1AKCpAuUqgWDpQpwFfpVFh3hnm2Ha");
+        assert_eq!(transaction.to, "2xSHLfiPs3aEhzbLnYbyzWYMEaYnwSwJwAnVh5CwHWwX");
+        assert_eq!(transaction.value, "1");
+        assert_eq!(transaction.fee, "10000");
+        assert_eq!(transaction.created_at, DateTime::from_timestamp(1687444563, 0).unwrap());
+
+        let metadata: TransactionNFTTransferMetadata = serde_json::from_value(transaction.metadata.unwrap()).unwrap();
+        assert_eq!(metadata.asset_id, NFTAssetId::new(Chain::Solana, SPL_NFT_MINT, SPL_NFT_MINT));
+    }
+
+    #[test]
+    fn test_transaction_nft_token_metadata_transfer() {
+        let transaction = map_single_transaction(include_str!("../../testdata/nft_token_program_transfer.json"));
+
+        assert_eq!(transaction.transaction_type, TransactionType::TransferNFT);
+        assert_eq!(transaction.asset_id, Chain::Solana.as_asset_id());
+        assert_eq!(transaction.from, "8wytzyCBXco7yqgrLDiecpEt452MSuNWRe7xsLgAAX1H");
+        assert_eq!(transaction.to, "FGbkx8rYTPJubjyScReeps6GA83D1nSmFr3BrN7buokb");
+        assert_eq!(transaction.value, "1");
+        assert_eq!(transaction.fee, "7500");
+        assert_eq!(transaction.created_at, DateTime::from_timestamp(1779221552, 0).unwrap());
+
+        let metadata: TransactionNFTTransferMetadata = serde_json::from_value(transaction.metadata.unwrap()).unwrap();
+        assert_eq!(metadata.asset_id, NFTAssetId::new(Chain::Solana, PNFT_MINT, PNFT_MINT));
+    }
+
+    #[test]
+    fn test_transaction_nft_mplcore_transfer() {
+        let transaction = map_single_transaction(include_str!("../../testdata/nft_mplcore_transfer.json"));
+
+        assert_eq!(transaction.transaction_type, TransactionType::TransferNFT);
+        assert_eq!(transaction.asset_id, Chain::Solana.as_asset_id());
+        assert_eq!(transaction.from, "8wytzyCBXco7yqgrLDiecpEt452MSuNWRe7xsLgAAX1H");
+        assert_eq!(transaction.to, "G7B17AigRCGvwnxFc5U8zY5T3NBGduLzT7KYApNU2VdR");
+        assert_eq!(transaction.value, "0");
+        assert_eq!(transaction.fee, "79998");
+        assert_eq!(transaction.created_at, DateTime::from_timestamp(1752111467, 0).unwrap());
+
+        let metadata: TransactionNFTTransferMetadata = serde_json::from_value(transaction.metadata.unwrap()).unwrap();
+        assert_eq!(metadata.asset_id, NFTAssetId::new(Chain::Solana, CORE_COLLECTION, CORE_ASSET));
+    }
+
+    #[test]
+    fn test_transaction_swap_token_to_sol() {
+        let result: JsonRpcResult<BlockTransaction> = serde_json::from_str(include_str!("../../testdata/swap_token_to_sol.json")).unwrap();
+
+        let transaction = map_transaction(&result.result, 1).unwrap();
+        let expected = TransactionSwapMetadata {
+            from_asset: AssetId::from_token(Chain::Solana, "BKpSnSdNdANUxKPsn4AQ8mf4b9BoeVs9JD1Q8cVkpump"),
+            from_value: "393647577456".to_string(),
+            to_asset: Chain::Solana.as_asset_id(),
+            to_value: "139512057".to_string(),
+            provider: Some(SwapProvider::Jupiter.id().to_owned()),
+        };
+
+        assert_eq!(transaction.metadata, Some(serde_json::to_value(expected).unwrap()));
+    }
+
+    #[test]
+    fn test_transaction_swap_token_to_token() {
+        let result: JsonRpcResult<BlockTransaction> = serde_json::from_str(include_str!("../../testdata/swap_token_to_token.json")).unwrap();
+
+        let transaction = map_transaction(&result.result, 1).unwrap();
+        let expected = TransactionSwapMetadata {
+            from_asset: AssetId::from_token(Chain::Solana, PYUSD_TOKEN_MINT),
+            from_value: "1000000".to_string(),
+            to_asset: AssetId::from_token(Chain::Solana, USDT_TOKEN_MINT),
+            to_value: "999932".to_string(),
+            provider: Some(SwapProvider::Jupiter.id().to_owned()),
+        };
+
+        assert_eq!(transaction.metadata, Some(serde_json::to_value(expected).unwrap()));
+    }
+
+    #[test]
+    fn test_transaction_swap_sol_to_token() {
+        let result: JsonRpcResult<BlockTransaction> = serde_json::from_str(include_str!("../../testdata/swap_sol_to_token.json")).unwrap();
+
+        let transaction = map_transaction(&result.result, 1).unwrap();
+        let expected = TransactionSwapMetadata {
+            from_asset: Chain::Solana.as_asset_id(),
+            from_value: "10000000".to_string(),
+            to_asset: AssetId::from_token(Chain::Solana, USDT_TOKEN_MINT),
+            to_value: "1678930".to_string(),
+            provider: Some(SwapProvider::Jupiter.id().to_owned()),
+        };
+
+        assert_eq!(transaction.metadata, Some(serde_json::to_value(expected).unwrap()));
+    }
+
+    #[test]
+    fn test_transaction_swap_okx_token_to_token() {
+        let result: JsonRpcResult<BlockTransaction> = serde_json::from_str(include_str!("../../testdata/swap_okx_token_to_token.json")).unwrap();
+
+        let transaction = map_transaction(&result.result, 1).unwrap();
+        let expected = TransactionSwapMetadata {
+            from_asset: SOLANA_USDC_ASSET_ID.clone(),
+            from_value: "56061275".to_string(),
+            to_asset: AssetId::from_token(Chain::Solana, "HmMubgKx91Tpq3jmfcKQwsv5HrErqnCTTRJMB6afFR2u"),
+            to_value: "2190151370200".to_string(),
+            provider: Some(SwapProvider::Okx.id().to_owned()),
+        };
+
+        assert_eq!(transaction.transaction_type, TransactionType::Swap);
+        assert_eq!(transaction.asset_id, SOLANA_USDC_ASSET_ID.clone());
+        assert_eq!(transaction.contract, Some(OKX_DEX_V2_PROGRAM_ID.to_string()));
+        assert_eq!(transaction.value, "56061275");
+        assert_eq!(transaction.metadata, Some(serde_json::to_value(expected).unwrap()));
+    }
+
+    #[test]
+    fn test_transaction_transfer_sol() {
+        let result: JsonRpcResult<BlockTransaction> = serde_json::from_str(include_str!("../../testdata/transfer_sol.json")).unwrap();
+
+        let transaction = map_transaction(&result.result, 1751394455).unwrap();
+        let expected = Transaction::new(
+            "t6DpS6U7G2UG4QwDq4mPM7F45Rnttxp2pHGRwTYsF7frxAs7KmSWWDcpMneMUULbKndkZy8iUvSU1AZUsqzDCPN".to_string(),
+            Chain::Solana.as_asset_id(),
+            "DyB4TbDBqPUsCfsJMuoqjktEAod7D3KMNULSo7R1Rb61".to_string(),
+            "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh".to_string(),
+            None,
+            TransactionType::Transfer,
+            TransactionState::Confirmed,
+            "5000".to_string(),
+            Chain::Solana.as_asset_id(),
+            "2173".to_string(),
+            None,
+            None,
+            DateTime::from_timestamp(1751394455, 0).unwrap(),
+        );
+
+        assert_eq!(transaction, expected);
+    }
+
+    #[test]
+    fn test_transaction_transfer_sol_with_compute() {
+        let result: JsonRpcResult<BlockTransaction> = serde_json::from_str(include_str!("../../testdata/transfer_sol_with_compute.json")).unwrap();
+
+        let transaction = map_transaction(&result.result, 1750884182).unwrap();
+        let expected = Transaction::new(
+            "2QeBm7G7qLmVTCVKAkbSUuZvcFjg6mBRVqaVSKWSZsTqJxHVTzMUwxDtu1Myfu8RzpUv5YMEBFFpGbwVM9ZQY8DL".to_string(),
+            Chain::Solana.as_asset_id(),
+            "8wytzyCBXco7yqgrLDiecpEt452MSuNWRe7xsLgAAX1H".to_string(),
+            "7nVDzZUjrBA3gHs3gNcHidhmR96CH7KpKsU8pyBZGHUr".to_string(),
+            None,
+            TransactionType::Transfer,
+            TransactionState::Confirmed,
+            "7500".to_string(),
+            Chain::Solana.as_asset_id(),
+            "69000000".to_string(),
+            None,
+            None,
+            DateTime::from_timestamp(1750884182, 0).unwrap(),
+        );
+
+        assert_eq!(transaction, expected);
+    }
+
+    #[test]
+    fn test_transaction_transfer_sol_compute_program_last() {
+        let transaction = map_single_transaction(include_str!("../../testdata/transfer_sol_compute_program_last.json"));
+        let expected = Transaction::new(
+            "55cdNy5LCuvW6SC3uZstkHwAt9Tpu3EMn1LujddzX93X6LNd2VaXsbvoUMkgdyuDJ8W6MGDrucVxMGqiipf596fv".to_string(),
+            Chain::Solana.as_asset_id(),
+            "ASTyfSima4LLAdDgoFGkgqoKowG1LZFDr9fAQrg7iaJZ".to_string(),
+            "BEMoVoNd74UEaRsyKsqhQvwawtm3qDKMKWUZtwKWVT3d".to_string(),
+            None,
+            TransactionType::Transfer,
+            TransactionState::Confirmed,
+            "8125".to_string(),
+            Chain::Solana.as_asset_id(),
+            "66825800".to_string(),
+            None,
+            None,
+            DateTime::from_timestamp(1786173123, 0).unwrap(),
+        );
+
+        assert_eq!(transaction, expected);
+    }
+
+    #[test]
+    fn test_transaction_error_maps_to_reverted() {
+        let result: JsonRpcResult<BlockTransaction> = serde_json::from_str(include_str!("../../testdata/transaction_reverted_program_account_not_found.json")).unwrap();
+
+        let transaction = map_transaction(&result.result, 1).unwrap();
+
+        assert_eq!(transaction.state, TransactionState::Reverted);
+    }
+
+    #[test]
+    fn test_map_transaction_by_hash() {
+        let result: JsonRpcResult<SingleTransaction> = serde_json::from_str(include_str!("../../testdata/usdc_transfer.json")).unwrap();
+
+        let block_transaction = BlockTransaction {
+            meta: result.result.meta,
+            transaction: result.result.transaction,
+        };
+
+        let transaction = map_transaction(&block_transaction, result.result.block_time).unwrap();
+        let expected = Transaction::new(
+            TEST_TRANSACTION_ID.to_string(),
+            SOLANA_USDC_ASSET_ID.clone(),
+            "37BenMAXFJMo3GaXKb2XLsNQXmd6VbbdShZWnwDj9D6k".to_string(),
+            "3UJQqKq8Xyx4aVRmHgEwpQZiW7toYRQCTy6Bgp1RdKnK".to_string(),
+            None,
+            TransactionType::Transfer,
+            TransactionState::Confirmed,
+            "5500".to_string(),
+            Chain::Solana.as_asset_id(),
+            "100000".to_string(),
+            None,
+            None,
+            DateTime::from_timestamp(1753346616, 0).unwrap(),
+        );
+
+        assert_eq!(transaction, expected);
+    }
+
+    #[test]
+    fn test_transaction_transfer_usdc_fee_payer() {
+        let result: JsonRpcResult<SingleTransaction> = serde_json::from_str(include_str!("../../testdata/usdc_transfer_fee_payer.json")).unwrap();
+
+        let block_transaction = BlockTransaction {
+            meta: result.result.meta,
+            transaction: result.result.transaction,
+        };
+
+        let transaction = map_transaction(&block_transaction, result.result.block_time).unwrap();
+        let expected = Transaction::new(
+            "65MevEhHuXZzwQ8VftyQUmbgbs41bj2KMhf6zDM5hqsXN6jxsHYniHbi7MMWQ4kitcgfRdsuYe1s7zAqtzPYXZVG".to_string(),
+            SOLANA_USDC_ASSET_ID.clone(),
+            "5QtyKPHtWUf45bNb5buQ6UxpL2ekSJxBCK9g8xMCsc9U".to_string(),
+            "B1nzrk99FEDAYB2M82yepdvEv1YBRJKcx5Y5R6MSDW1Q".to_string(),
+            None,
+            TransactionType::Transfer,
+            TransactionState::Confirmed,
+            "10000".to_string(),
+            Chain::Solana.as_asset_id(),
+            "24737625".to_string(),
+            None,
+            None,
+            DateTime::from_timestamp(1774244726, 0).unwrap(),
+        );
+
+        assert_eq!(transaction, expected);
+    }
+
+    #[test]
+    fn test_get_transaction_status() {
+        let result: JsonRpcResult<SolanaTransaction> = serde_json::from_str(include_str!("../../testdata/transaction_state_transfer_sol.json")).unwrap();
+        let transaction = result.result;
+
+        let state = if transaction.slot > 0 {
+            if transaction.meta.has_error() {
+                TransactionState::Reverted
+            } else {
+                TransactionState::Confirmed
+            }
+        } else {
+            TransactionState::Pending
+        };
+
+        assert_eq!(state, TransactionState::Confirmed);
+        assert_eq!(transaction.slot, 361169359);
+    }
+
+    #[test]
+    fn test_transaction_chainflip_vault_swap() {
+        let result: JsonRpcResult<BlockTransaction> = serde_json::from_str(include_str!("../../testdata/chainflip_vault_swap.json")).unwrap();
+        let transaction = map_transaction(&result.result, 1772283531).unwrap();
+
+        assert_eq!(transaction.transaction_type, TransactionType::SmartContractCall);
+        assert_eq!(transaction.from, "CabroWmzUzcqqGvprUoC7RnJznuwX6qf5W1tSSaomri7");
+        assert_eq!(transaction.contract, Some("J88B7gmadHzTNGiy54c9Ms8BsEXNdB2fntFyhKpk3qoT".to_string()));
+        assert_eq!(transaction.value, "152686560");
+    }
+
+    #[test]
+    fn test_transaction_broadcast_error() {
+        let error_response: JsonRpcErrorResponse = serde_json::from_str(include_str!("../../testdata/transaction_broadcast_swap_error.json")).unwrap();
+
+        assert_eq!(error_response.error.code, -32002);
+        assert_eq!(
+            error_response.error.message,
+            "Transaction simulation failed: Error processing Instruction 3: custom program error: 0x1771"
+        );
+        assert_eq!(error_response.id, Some(1755839259));
+    }
+}

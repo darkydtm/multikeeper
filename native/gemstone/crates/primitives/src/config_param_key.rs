@@ -1,0 +1,94 @@
+use crate::{Chain, ListProviderName, PriceProvider, SwapProvider};
+use strum::AsRefStr;
+
+#[derive(Debug, AsRefStr)]
+#[strum(serialize_all = "camelCase")]
+pub enum ConfigParamKey {
+    TransactionsRequestLimit(Chain),
+    SwapperVaultAddresses(SwapProvider),
+    PriceProviderAssetsLimit(PriceProvider),
+    PriceProviderAssetsDuration(PriceProvider),
+    PriceProviderAssetsNewDuration(PriceProvider),
+    PriceProviderAssetsMetadataDuration(PriceProvider),
+    PriceProviderPricesDuration(PriceProvider),
+    PriceProviderChartsHourlyDuration(PriceProvider),
+    PriceProviderMetricsDuration(PriceProvider),
+    PriceProviderCleanOutdatedDuration(PriceProvider),
+    ListProviderUpdateDuration(ListProviderName),
+}
+
+impl ConfigParamKey {
+    pub fn all() -> Vec<Self> {
+        let transactions = Chain::all().into_iter().map(Self::TransactionsRequestLimit);
+        let swapper = SwapProvider::cross_chain_providers().into_iter().map(Self::SwapperVaultAddresses);
+        let assets_limit = PriceProvider::all().into_iter().map(Self::PriceProviderAssetsLimit);
+        let assets = PriceProvider::all().into_iter().map(Self::PriceProviderAssetsDuration);
+        let assets_new = PriceProvider::all().into_iter().map(Self::PriceProviderAssetsNewDuration);
+        let assets_metadata = PriceProvider::all().into_iter().map(Self::PriceProviderAssetsMetadataDuration);
+        let prices = PriceProvider::all().into_iter().map(Self::PriceProviderPricesDuration);
+        let charts_hourly = PriceProvider::all().into_iter().map(Self::PriceProviderChartsHourlyDuration);
+        let metrics = PriceProvider::all().into_iter().map(Self::PriceProviderMetricsDuration);
+        let clean_outdated = PriceProvider::all().into_iter().map(Self::PriceProviderCleanOutdatedDuration);
+        let lists = ListProviderName::all().into_iter().map(Self::ListProviderUpdateDuration);
+        transactions
+            .chain(swapper)
+            .chain(assets_limit)
+            .chain(assets)
+            .chain(assets_new)
+            .chain(assets_metadata)
+            .chain(prices)
+            .chain(charts_hourly)
+            .chain(metrics)
+            .chain(clean_outdated)
+            .chain(lists)
+            .collect()
+    }
+
+    pub fn key(&self) -> String {
+        match self {
+            Self::TransactionsRequestLimit(chain) => format!("{}.{}", self.as_ref(), chain.as_ref()),
+            Self::SwapperVaultAddresses(provider) => format!("{}.{}", self.as_ref(), provider.as_ref()),
+            Self::PriceProviderAssetsLimit(provider) => format!("{}.{}", self.as_ref(), provider.as_ref()),
+            Self::PriceProviderAssetsDuration(provider) => format!("{}.{}", self.as_ref(), provider.as_ref()),
+            Self::PriceProviderAssetsNewDuration(provider) => format!("{}.{}", self.as_ref(), provider.as_ref()),
+            Self::PriceProviderAssetsMetadataDuration(provider) => format!("{}.{}", self.as_ref(), provider.as_ref()),
+            Self::PriceProviderPricesDuration(provider) => format!("{}.{}", self.as_ref(), provider.as_ref()),
+            Self::PriceProviderChartsHourlyDuration(provider) => format!("{}.{}", self.as_ref(), provider.as_ref()),
+            Self::PriceProviderMetricsDuration(provider) => format!("{}.{}", self.as_ref(), provider.as_ref()),
+            Self::PriceProviderCleanOutdatedDuration(provider) => format!("{}.{}", self.as_ref(), provider.as_ref()),
+            Self::ListProviderUpdateDuration(provider) => format!("{}.{}", self.as_ref(), provider.as_ref()),
+        }
+    }
+
+    pub fn default_value(&self) -> &str {
+        match self {
+            Self::TransactionsRequestLimit(_) => "100",
+            Self::SwapperVaultAddresses(_) => "5m",
+            Self::PriceProviderAssetsLimit(PriceProvider::TonApi) => "1000",
+            Self::PriceProviderAssetsLimit(_) => "5000",
+            Self::PriceProviderAssetsDuration(_) => "1d",
+            Self::PriceProviderAssetsNewDuration(_) => "15m",
+            Self::PriceProviderAssetsMetadataDuration(_) => "30d",
+            Self::PriceProviderPricesDuration(_) => "60s",
+            Self::PriceProviderChartsHourlyDuration(_) => "7d",
+            Self::PriceProviderMetricsDuration(_) => "5m",
+            Self::PriceProviderCleanOutdatedDuration(_) => "1d",
+            Self::ListProviderUpdateDuration(_) => "1d",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_price_provider_assets_limit() {
+        let tonapi = ConfigParamKey::PriceProviderAssetsLimit(PriceProvider::TonApi);
+        let coingecko = ConfigParamKey::PriceProviderAssetsLimit(PriceProvider::Coingecko);
+
+        assert_eq!(tonapi.key(), "priceProviderAssetsLimit.tonapi");
+        assert_eq!(tonapi.default_value(), "1000");
+        assert_eq!(coingecko.default_value(), "5000");
+    }
+}

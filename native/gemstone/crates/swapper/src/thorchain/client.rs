@@ -1,0 +1,64 @@
+use super::{
+    THORChainNetwork,
+    asset::THORChainAsset,
+    model::{AsgardVault, InboundAddress, QuoteSwapRequest, QuoteSwapResponse, TransactionStatus},
+};
+use crate::SwapperError;
+use gem_client::{Client, ClientExt};
+use serde_urlencoded;
+use std::fmt::Debug;
+
+#[derive(Clone, Debug)]
+pub struct ThorChainSwapClient<C>
+where
+    C: Client + Clone + Send + Sync + Debug + 'static,
+{
+    client: C,
+    network: THORChainNetwork,
+}
+
+impl<C> ThorChainSwapClient<C>
+where
+    C: Client + Clone + Send + Sync + Debug + 'static,
+{
+    pub fn new(client: C, network: THORChainNetwork) -> Self {
+        Self { client, network }
+    }
+
+    pub async fn get_quote(
+        &self,
+        from_asset: THORChainAsset,
+        to_asset: THORChainAsset,
+        value: String,
+        streaming_interval: i64,
+        streaming_quantity: i64,
+        affiliate: String,
+        affiliate_bps: i64,
+    ) -> Result<QuoteSwapResponse, SwapperError> {
+        let params = QuoteSwapRequest {
+            from_asset: from_asset.quote_asset_name(),
+            to_asset: to_asset.quote_asset_name(),
+            amount: value,
+            affiliate,
+            affiliate_bps,
+            streaming_interval,
+            streaming_quantity,
+        };
+        let query = serde_urlencoded::to_string(params).map_err(SwapperError::from)?;
+        let path = format!("/{}/quote/swap?{query}", self.network);
+        self.client.get(&path).await.map_err(SwapperError::from)
+    }
+
+    pub async fn get_inbound_addresses(&self) -> Result<Vec<InboundAddress>, SwapperError> {
+        self.client.get(&format!("/{}/inbound_addresses", self.network)).await.map_err(SwapperError::from)
+    }
+
+    pub async fn get_asgard_vaults(&self) -> Result<Vec<AsgardVault>, SwapperError> {
+        self.client.get(&format!("/{}/vaults/asgard", self.network)).await.map_err(SwapperError::from)
+    }
+
+    pub async fn get_transaction_status(&self, hash: &str) -> Result<TransactionStatus, SwapperError> {
+        let path = format!("/{}/tx/status/{hash}", self.network);
+        self.client.get(&path).await.map_err(SwapperError::from)
+    }
+}

@@ -1,0 +1,204 @@
+use gem_hash::blake2::blake2b_256;
+
+use crate::cbor::CborEncoder;
+
+const AUXILIARY_DATA_TAG: u64 = 259;
+const MAYA_PROTOCOL_AUXILIARY_KEY: u64 = 6676;
+const MEMO_SEGMENT_SIZE: usize = 64;
+
+#[derive(Debug)]
+pub(crate) struct TransactionInput {
+    pub(crate) transaction_hash: [u8; 32],
+    pub(crate) output_index: u64,
+}
+
+#[derive(Debug)]
+pub(crate) struct TransactionOutput {
+    pub(crate) address: Vec<u8>,
+    pub(crate) amount: u64,
+}
+
+#[derive(Debug)]
+pub(crate) struct Transaction {
+    pub(crate) inputs: Vec<TransactionInput>,
+    pub(crate) outputs: Vec<TransactionOutput>,
+    pub(crate) fee: u64,
+    pub(crate) expiration_block_number: u64,
+    pub(crate) memo: Option<String>,
+}
+
+impl Transaction {
+    fn auxiliary_data_bytes(&self) -> Option<Vec<u8>> {
+        self.memo.as_deref().filter(|memo| !memo.is_empty()).map(|memo| {
+            let segments = chunk_memo_segments(memo);
+            let mut encoder = CborEncoder::new();
+            encoder.tag(AUXILIARY_DATA_TAG);
+            encoder.map(1);
+            encoder.unsigned(0);
+            encoder.map(1);
+            encoder.unsigned(0);
+            encoder.map(1);
+            encoder.unsigned(MAYA_PROTOCOL_AUXILIARY_KEY);
+            encoder.map(1);
+            encoder.text("memo");
+            encoder.array(segments.len());
+            for segment in segments {
+                encoder.text(segment);
+            }
+            encoder.into_bytes()
+        })
+    }
+
+    pub(crate) fn body_bytes(&self) -> Vec<u8> {
+        let auxiliary_data = self.auxiliary_data_bytes();
+        let mut encoder = CborEncoder::new();
+        encoder.map(if auxiliary_data.is_some() { 5 } else { 4 });
+
+        encoder.unsigned(0);
+        encoder.array(self.inputs.len());
+        for input in &self.inputs {
+            encoder.array(2);
+            encoder.bytes(&input.transaction_hash);
+            encoder.unsigned(input.output_index);
+        }
+
+        encoder.unsigned(1);
+        encoder.array(self.outputs.len());
+        for output in &self.outputs {
+            encoder.array(2);
+            encoder.bytes(&output.address);
+            encoder.unsigned(output.amount);
+        }
+
+        encoder.unsigned(2);
+        encoder.unsigned(self.fee);
+        encoder.unsigned(3);
+        encoder.unsigned(self.expiration_block_number);
+
+        if let Some(auxiliary_data) = auxiliary_data {
+            encoder.unsigned(7);
+            encoder.bytes(&blake2b_256(&auxiliary_data));
+        }
+
+        encoder.into_bytes()
+    }
+
+    #[cfg(feature = "signer")]
+    pub(crate) fn transaction_id(&self) -> [u8; 32] {
+        blake2b_256(&self.body_bytes())
+    }
+
+    pub(crate) fn signed_bytes(&self, public_key: &[u8; 32], signature: &[u8; 64]) -> Vec<u8> {
+        let body = self.body_bytes();
+        let auxiliary_data = self.auxiliary_data_bytes();
+        let mut encoder = CborEncoder::new();
+        encoder.array(4);
+        encoder.raw(&body);
+        encoder.map(1);
+        encoder.unsigned(0);
+        encoder.array(1);
+        encoder.array(2);
+        encoder.bytes(public_key);
+        encoder.bytes(signature);
+        encoder.true_value();
+        if let Some(auxiliary_data) = auxiliary_data {
+            encoder.raw(&auxiliary_data);
+        } else {
+            encoder.null();
+        }
+        encoder.into_bytes()
+    }
+
+    pub(crate) fn signed_size(&self) -> usize {
+        self.signed_bytes(&[0u8; 32], &[0u8; 64]).len()
+    }
+}
+
+fn chunk_memo_segments(memo: &str) -> Vec<&str> {
+    let mut segments = Vec::new();
+    let mut start = 0usize;
+
+    for (index, character) in memo.char_indices() {
+        let end = index + character.len_utf8();
+        if start < index && end - start > MEMO_SEGMENT_SIZE {
+            segments.push(&memo[start..index]);
+            start = index;
+        }
+    }
+
+    if start < memo.len() {
+        segments.push(&memo[start..]);
+    }
+
+    segments
+}
+
+#[cfg(all(test, feature = "signer"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_transaction_encode_and_id() {
+        let transaction = Transaction {
+            inputs: vec![
+                TransactionInput::mock(),
+                TransactionInput::mock_with("554f2fd942a23d06835d26bbd78f0106fa94c8a551114a0bef81927f66467af0", 0),
+            ],
+            outputs: vec![
+                TransactionOutput::mock(),
+                TransactionOutput::mock_with(
+                    "addr1q92cmkgzv9h4e5q7mnrzsuxtgayvg4qr7y3gyx97ukmz3dfx7r9fu73vqn25377ke6r0xk97zw07dqr9y5myxlgadl2s0dgke5",
+                    16_749_189,
+                ),
+            ],
+            fee: 165_555,
+            expiration_block_number: 53_333_345,
+            memo: None,
+        };
+
+        assert_eq!(
+            hex::encode(transaction.body_bytes()),
+            "a40082825820f074134aabbfb13b8aec7cf5465b1e5a862bde5cb88532cc7e64619179b3e76701825820554f2fd942a23d06835d26bbd78f0106fa94c8a551114a0bef81927f66467af000018282583901df58ee97ce7a46cd8bdeec4e5f3a03297eb197825ed5681191110804df22424b6880b39e4bac8c58de9fe6d23d79aaf44756389d827aa09b1a001e848082583901558dd902616f5cd01edcc62870cb4748c45403f1228218bee5b628b526f0ca9e7a2c04d548fbd6ce86f358be139fe680652536437d1d6fd51a00ff9285021a000286b3031a032dcd61"
+        );
+        assert_eq!(
+            hex::encode(transaction.transaction_id()),
+            "cc262713a3e15a0fa245b062f33ffc6c2aa5a64c3ae7bfa793414069914e1bbf"
+        );
+    }
+
+    #[test]
+    fn test_transaction_auxiliary_data_memo() {
+        let transaction = Transaction {
+            inputs: vec![TransactionInput::mock()],
+            outputs: vec![TransactionOutput::mock()],
+            fee: 165_555,
+            expiration_block_number: 53_333_345,
+            memo: Some("=:b:bc1qdestination:0/1/0:g1:50".to_string()),
+        };
+
+        assert_eq!(
+            hex::encode(transaction.auxiliary_data_bytes().unwrap()),
+            "d90103a100a100a1191a14a1646d656d6f81781f3d3a623a6263317164657374696e6174696f6e3a302f312f303a67313a3530"
+        );
+        assert_eq!(
+            hex::encode(transaction.body_bytes()),
+            "a50081825820f074134aabbfb13b8aec7cf5465b1e5a862bde5cb88532cc7e64619179b3e76701018182583901df58ee97ce7a46cd8bdeec4e5f3a03297eb197825ed5681191110804df22424b6880b39e4bac8c58de9fe6d23d79aaf44756389d827aa09b1a001e8480021a000286b3031a032dcd61075820ae2a7d445496dc92925a85781cc1351123f6b09afe9b0f632f9668b26e9c9227"
+        );
+    }
+
+    #[test]
+    fn test_transaction_auxiliary_data_memo_preserves_utf8_boundaries() {
+        let transaction = Transaction {
+            inputs: vec![TransactionInput::mock()],
+            outputs: vec![TransactionOutput::mock()],
+            fee: 165_555,
+            expiration_block_number: 53_333_345,
+            memo: Some(format!("{}{}{}", "a".repeat(63), "💎", "b".repeat(63))),
+        };
+
+        assert_eq!(
+            hex::encode(transaction.auxiliary_data_bytes().unwrap()),
+            format!("d90103a100a100a1191a14a1646d656d6f83783f{}7840f09f928e{}63626262", "61".repeat(63), "62".repeat(60))
+        );
+    }
+}

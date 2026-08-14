@@ -1,0 +1,13 @@
+[package]
+name = "settings"
+version = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+serde = { workspace = true }
+config = { workspace = true }
+serde_serializers = { path = "../serde_serializers" }
+gem_client = { path = "../gem_client" }
+
+[features]
+testkit = []

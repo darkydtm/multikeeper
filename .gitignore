@@ -10,6 +10,7 @@ captures
 .kotlin
 /build
 **/build/
+**/target/
 .build-cache
 tools/build/
 mavenLocal

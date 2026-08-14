@@ -25,6 +25,19 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android aarch64-linux-android armv7-linux-androideabi
+
+      - name: Setup Android NDK
+        run: |
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;29.0.13599879"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/29.0.13599879" >> "$GITHUB_ENV"
+
+      - name: Setup cargo-ndk
+        run: cargo install cargo-ndk --version 4.1.2 --locked
+
       - name: Cache Gradle Wrapper
         uses: actions/cache@v5
         with:

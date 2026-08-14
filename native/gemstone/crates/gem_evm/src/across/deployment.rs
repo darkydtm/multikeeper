@@ -1,0 +1,323 @@
+use super::fees::CapitalCostConfig;
+use crate::ether_conv::EtherConv;
+use alloy_primitives::{Address, map::HashSet};
+use num_bigint::BigInt;
+use primitives::{AssetId, Chain, EVMChain, asset_constants::*, contract_constants::*};
+use std::{collections::HashMap, vec};
+
+/// https://docs.across.to/developer-docs/developers/contract-addresses
+pub struct AcrossDeployment {
+    pub chain_id: u32,
+    pub spoke_pool: &'static str,
+    pub multicall_handler: &'static str,
+}
+
+#[derive(Debug)]
+pub struct AssetMapping {
+    pub capital_cost: CapitalCostConfig,
+    pub set: HashSet<AssetId>,
+}
+
+impl AcrossDeployment {
+    fn chain_id(chain: &Chain) -> Option<u32> {
+        chain.network_id_value().and_then(|network_id| u32::try_from(network_id).ok())
+    }
+
+    pub fn deployment_by_chain(chain: &Chain) -> Option<Self> {
+        let chain_id = Self::chain_id(chain)?;
+        let spoke_pool = match chain {
+            Chain::Ethereum => ETHEREUM_ACROSS_SPOKE_POOL_CONTRACT,
+            Chain::Arbitrum => ARBITRUM_ACROSS_SPOKE_POOL_CONTRACT,
+            Chain::AvalancheC => AVALANCHE_ACROSS_SPOKE_POOL_CONTRACT,
+            Chain::Base => BASE_ACROSS_SPOKE_POOL_CONTRACT,
+            Chain::Linea => LINEA_ACROSS_SPOKE_POOL_CONTRACT,
+            Chain::Optimism => OPTIMISM_ACROSS_SPOKE_POOL_CONTRACT,
+            Chain::Polygon => POLYGON_ACROSS_SPOKE_POOL_CONTRACT,
+            Chain::World => WORLD_ACROSS_SPOKE_POOL_CONTRACT,
+            Chain::ZkSync => ZKSYNC_ACROSS_SPOKE_POOL_CONTRACT,
+            Chain::Ink => INK_ACROSS_SPOKE_POOL_CONTRACT,
+            Chain::Unichain => UNICHAIN_ACROSS_SPOKE_POOL_CONTRACT,
+            Chain::Monad => MONAD_ACROSS_SPOKE_POOL_CONTRACT,
+            Chain::SmartChain => SMARTCHAIN_ACROSS_SPOKE_POOL_CONTRACT,
+            Chain::Hyperliquid => HYPEREVM_ACROSS_SPOKE_POOL_CONTRACT,
+            Chain::Plasma => PLASMA_ACROSS_SPOKE_POOL_CONTRACT,
+            Chain::Robinhood => ROBINHOOD_ACROSS_SPOKE_POOL_CONTRACT,
+            Chain::Tron => TRON_ACROSS_SPOKE_POOL_CONTRACT,
+            _ => return None,
+        };
+        let multicall_handler = match chain {
+            Chain::AvalancheC => AVALANCHE_ACROSS_MULTICALL_HANDLER_CONTRACT,
+            Chain::Linea => LINEA_ACROSS_MULTICALL_HANDLER_CONTRACT,
+            Chain::ZkSync => ZKSYNC_ACROSS_MULTICALL_HANDLER_CONTRACT,
+            Chain::SmartChain => SMARTCHAIN_ACROSS_MULTICALL_HANDLER_CONTRACT,
+            Chain::Monad => MONAD_ACROSS_MULTICALL_HANDLER_CONTRACT,
+            Chain::Hyperliquid => HYPEREVM_ACROSS_MULTICALL_HANDLER_CONTRACT,
+            Chain::Plasma => PLASMA_ACROSS_MULTICALL_HANDLER_CONTRACT,
+            Chain::Robinhood => ROBINHOOD_ACROSS_MULTICALL_HANDLER_CONTRACT,
+            Chain::Ethereum | Chain::Arbitrum | Chain::Base | Chain::Optimism | Chain::Polygon | Chain::World | Chain::Ink | Chain::Unichain | Chain::Tron => {
+                ETHEREUM_ACROSS_MULTICALL_HANDLER_CONTRACT
+            }
+            _ => return None,
+        };
+        Some(Self {
+            chain_id,
+            spoke_pool,
+            multicall_handler,
+        })
+    }
+
+    pub fn multicall_handler(&self) -> &'static str {
+        self.multicall_handler
+    }
+
+    pub fn supported_assets() -> HashMap<Chain, Vec<AssetId>> {
+        HashMap::from([
+            (
+                Chain::Ethereum,
+                vec![ETHEREUM_USDC_ASSET_ID.clone(), ETHEREUM_USDT_ASSET_ID.clone(), ETHEREUM_WETH_ASSET_ID.clone()],
+            ),
+            (
+                Chain::Optimism,
+                vec![OPTIMISM_USDT_ASSET_ID.clone(), OPTIMISM_USDC_ASSET_ID.clone(), OPTIMISM_WETH_ASSET_ID.clone()],
+            ),
+            (
+                Chain::Polygon,
+                vec![POLYGON_USDC_ASSET_ID.clone(), POLYGON_USDT_ASSET_ID.clone(), POLYGON_WETH_ASSET_ID.clone()],
+            ),
+            (
+                Chain::Arbitrum,
+                vec![ARBITRUM_USDT_ASSET_ID.clone(), ARBITRUM_USDC_ASSET_ID.clone(), ARBITRUM_WETH_ASSET_ID.clone()],
+            ),
+            (Chain::Base, vec![BASE_WETH_ASSET_ID.clone(), BASE_USDC_ASSET_ID.clone()]),
+            (Chain::AvalancheC, vec![AVALANCHE_USDC_ASSET_ID.clone(), AVALANCHE_USDT_ASSET_ID.clone()]),
+            (Chain::Hyperliquid, vec![HYPEREVM_USDC_ASSET_ID.clone(), HYPEREVM_USDT_ASSET_ID.clone()]),
+            (Chain::Linea, vec![LINEA_USDT_ASSET_ID.clone(), LINEA_WETH_ASSET_ID.clone()]),
+            (Chain::ZkSync, vec![ZKSYNC_WETH_ASSET_ID.clone(), ZKSYNC_USDT_ASSET_ID.clone()]),
+            (Chain::World, vec![WORLD_WETH_ASSET_ID.clone()]),
+            (Chain::Ink, vec![INK_WETH_ASSET_ID.clone(), INK_USDT_ASSET_ID.clone()]),
+            (Chain::Unichain, vec![UNICHAIN_WETH_ASSET_ID.clone(), UNICHAIN_USDC_ASSET_ID.clone()]),
+            (Chain::Monad, vec![MONAD_USDC_ASSET_ID.clone(), MONAD_USDT_ASSET_ID.clone()]),
+            (Chain::SmartChain, vec![SMARTCHAIN_ETH_ASSET_ID.clone()]),
+            (Chain::Plasma, vec![PLASMA_USDT_ASSET_ID.clone()]),
+            (Chain::Robinhood, vec![ROBINHOOD_WETH_ASSET_ID.clone(), ROBINHOOD_USDG_ASSET_ID.clone()]),
+            (Chain::Tron, vec![TRON_USDT_ASSET_ID.clone()]),
+        ])
+    }
+
+    pub fn supported_asset_for_token(chain: Chain, token: Address) -> Option<AssetId> {
+        let asset = Self::supported_assets()
+            .get(&chain)?
+            .iter()
+            .find(|asset| {
+                asset
+                    .token_id
+                    .as_deref()
+                    .and_then(|token_id| token_id.parse::<Address>().ok())
+                    .is_some_and(|address| address == token)
+            })?
+            .clone();
+        let is_wrapped_native = EVMChain::from_chain(chain)
+            .and_then(|chain| chain.weth_contract().and_then(|address| address.parse::<Address>().ok()))
+            .is_some_and(|address| address == token);
+
+        if is_wrapped_native { Some(chain.as_asset_id()) } else { Some(asset) }
+    }
+
+    pub fn deposit_addresses() -> Vec<String> {
+        let mut addresses: HashSet<String> = HashSet::default();
+        for chain in Chain::all() {
+            if let Some(deployment) = Self::deployment_by_chain(&chain) {
+                addresses.insert(deployment.spoke_pool.to_string());
+            }
+        }
+        addresses.into_iter().collect()
+    }
+
+    pub fn send_addresses() -> Vec<String> {
+        let mut addresses: HashSet<String> = HashSet::default();
+        for chain in Chain::all() {
+            if let Some(deployment) = Self::deployment_by_chain(&chain) {
+                addresses.insert(deployment.spoke_pool.to_string());
+                addresses.insert(deployment.multicall_handler().to_string());
+            }
+        }
+        addresses.into_iter().collect()
+    }
+
+    pub fn asset_mappings() -> Vec<AssetMapping> {
+        vec![
+            AssetMapping {
+                capital_cost: CapitalCostConfig {
+                    lower_bound: EtherConv::parse_ether("0.0001"),
+                    upper_bound: EtherConv::parse_ether("0.000075"),
+                    cutoff: EtherConv::parse_ether("0.3"),
+                    decimals: 18,
+                },
+                set: HashSet::from_iter([
+                    ARBITRUM_WETH_ASSET_ID.clone(),
+                    BASE_WETH_ASSET_ID.clone(),
+                    ETHEREUM_WETH_ASSET_ID.clone(),
+                    LINEA_WETH_ASSET_ID.clone(),
+                    OPTIMISM_WETH_ASSET_ID.clone(),
+                    POLYGON_WETH_ASSET_ID.clone(),
+                    ZKSYNC_WETH_ASSET_ID.clone(),
+                    WORLD_WETH_ASSET_ID.clone(),
+                    INK_WETH_ASSET_ID.clone(),
+                    UNICHAIN_WETH_ASSET_ID.clone(),
+                    SMARTCHAIN_ETH_ASSET_ID.clone(),
+                    ROBINHOOD_WETH_ASSET_ID.clone(),
+                ]),
+            },
+            AssetMapping {
+                capital_cost: CapitalCostConfig {
+                    lower_bound: EtherConv::parse_ether("0.0001"),
+                    upper_bound: BigInt::from(0),
+                    cutoff: EtherConv::parse_ether("100000"),
+                    decimals: 6,
+                },
+                set: HashSet::from_iter([
+                    ARBITRUM_USDC_ASSET_ID.clone(),
+                    AVALANCHE_USDC_ASSET_ID.clone(),
+                    BASE_USDC_ASSET_ID.clone(),
+                    ETHEREUM_USDC_ASSET_ID.clone(),
+                    OPTIMISM_USDC_ASSET_ID.clone(),
+                    POLYGON_USDC_ASSET_ID.clone(),
+                    UNICHAIN_USDC_ASSET_ID.clone(),
+                    HYPEREVM_USDC_ASSET_ID.clone(),
+                    MONAD_USDC_ASSET_ID.clone(),
+                    ROBINHOOD_USDG_ASSET_ID.clone(),
+                ]),
+            },
+            // USDC on BSC decimals are 18
+            AssetMapping {
+                capital_cost: CapitalCostConfig {
+                    lower_bound: EtherConv::parse_ether("0.0001"),
+                    upper_bound: BigInt::from(0),
+                    cutoff: EtherConv::parse_ether("100000"),
+                    decimals: 18,
+                },
+                set: HashSet::from_iter([ETHEREUM_USDC_ASSET_ID.clone(), SMARTCHAIN_USDC_ASSET_ID.clone()]),
+            },
+            AssetMapping {
+                capital_cost: CapitalCostConfig {
+                    lower_bound: EtherConv::parse_ether("0.0001"),
+                    upper_bound: EtherConv::parse_ether("0.0001"),
+                    cutoff: EtherConv::parse_ether("1500000"),
+                    decimals: 6,
+                },
+                set: HashSet::from_iter([
+                    ARBITRUM_USDT_ASSET_ID.clone(),
+                    AVALANCHE_USDT_ASSET_ID.clone(),
+                    ETHEREUM_USDT_ASSET_ID.clone(),
+                    LINEA_USDT_ASSET_ID.clone(),
+                    OPTIMISM_USDT_ASSET_ID.clone(),
+                    POLYGON_USDT_ASSET_ID.clone(),
+                    ZKSYNC_USDT_ASSET_ID.clone(),
+                    INK_USDT_ASSET_ID.clone(),
+                    HYPEREVM_USDT_ASSET_ID.clone(),
+                    PLASMA_USDT_ASSET_ID.clone(),
+                    MONAD_USDT_ASSET_ID.clone(),
+                    TRON_USDT_ASSET_ID.clone(),
+                ]),
+            },
+            // USDT on BSC decimals are 18
+            AssetMapping {
+                capital_cost: CapitalCostConfig {
+                    lower_bound: EtherConv::parse_ether("0.0001"),
+                    upper_bound: EtherConv::parse_ether("0.0001"),
+                    cutoff: EtherConv::parse_ether("1500000"),
+                    decimals: 18,
+                },
+                set: HashSet::from_iter([ETHEREUM_USDT_ASSET_ID.clone(), SMARTCHAIN_USDT_ASSET_ID.clone()]),
+            },
+            AssetMapping {
+                capital_cost: CapitalCostConfig {
+                    lower_bound: EtherConv::parse_ether("0.0001"),
+                    upper_bound: EtherConv::parse_ether("0.0001"),
+                    cutoff: EtherConv::parse_ether("1500000"),
+                    decimals: 18,
+                },
+                set: HashSet::from_iter([
+                    ARBITRUM_DAI_ASSET_ID.clone(),
+                    BASE_DAI_ASSET_ID.clone(),
+                    ETHEREUM_DAI_ASSET_ID.clone(),
+                    LINEA_DAI_ASSET_ID.clone(),
+                    OPTIMISM_DAI_ASSET_ID.clone(),
+                    POLYGON_DAI_ASSET_ID.clone(),
+                    ZKSYNC_DAI_ASSET_ID.clone(),
+                ]),
+            },
+            AssetMapping {
+                capital_cost: CapitalCostConfig {
+                    lower_bound: EtherConv::parse_ether("0.0001"),
+                    upper_bound: BigInt::from(0),
+                    cutoff: EtherConv::parse_ether("100000"),
+                    decimals: 6,
+                },
+                set: HashSet::from_iter([
+                    ARBITRUM_USDC_E_ASSET_ID.clone(),
+                    BASE_USDC_E_ASSET_ID.clone(),
+                    ETHEREUM_USDC_E_ASSET_ID.clone(),
+                    LINEA_USDC_E_ASSET_ID.clone(),
+                    OPTIMISM_USDC_E_ASSET_ID.clone(),
+                    POLYGON_USDC_E_ASSET_ID.clone(),
+                    WORLD_USDC_E_ASSET_ID.clone(),
+                    ZKSYNC_USDC_E_ASSET_ID.clone(),
+                ]),
+            },
+            AssetMapping {
+                capital_cost: CapitalCostConfig {
+                    lower_bound: EtherConv::parse_ether("0.0003"),
+                    upper_bound: EtherConv::parse_ether("0.0025"),
+                    cutoff: EtherConv::parse_ether("10"),
+                    decimals: 8,
+                },
+                set: HashSet::from_iter([
+                    ARBITRUM_WBTC_ASSET_ID.clone(),
+                    ETHEREUM_WBTC_ASSET_ID.clone(),
+                    LINEA_WBTC_ASSET_ID.clone(),
+                    OPTIMISM_WBTC_ASSET_ID.clone(),
+                    POLYGON_WBTC_ASSET_ID.clone(),
+                    WORLD_WBTC_ASSET_ID.clone(),
+                    ZKSYNC_WBTC_ASSET_ID.clone(),
+                ]),
+            },
+            AssetMapping {
+                capital_cost: CapitalCostConfig {
+                    lower_bound: EtherConv::parse_ether("0.0001"),
+                    upper_bound: EtherConv::parse_ether("0.001"),
+                    cutoff: EtherConv::parse_ether("1000000"),
+                    decimals: 18,
+                },
+                set: HashSet::from_iter([
+                    ARBITRUM_ACX_ASSET_ID.clone(),
+                    ETHEREUM_ACX_ASSET_ID.clone(),
+                    OPTIMISM_ACX_ASSET_ID.clone(),
+                    POLYGON_ACX_ASSET_ID.clone(),
+                ]),
+            },
+        ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AcrossDeployment;
+    use primitives::{
+        Chain,
+        asset_constants::{ROBINHOOD_USDG_ASSET_ID, ROBINHOOD_WETH_ASSET_ID},
+        contract_constants::{ROBINHOOD_ACROSS_MULTICALL_HANDLER_CONTRACT, ROBINHOOD_ACROSS_SPOKE_POOL_CONTRACT},
+    };
+
+    #[test]
+    fn test_robinhood_deployment() {
+        let deployment = AcrossDeployment::deployment_by_chain(&Chain::Robinhood).unwrap();
+        assert_eq!(deployment.chain_id, 4663);
+        assert_eq!(deployment.spoke_pool, ROBINHOOD_ACROSS_SPOKE_POOL_CONTRACT);
+        assert_eq!(deployment.multicall_handler(), ROBINHOOD_ACROSS_MULTICALL_HANDLER_CONTRACT);
+        assert_eq!(
+            AcrossDeployment::supported_assets().get(&Chain::Robinhood),
+            Some(&vec![ROBINHOOD_WETH_ASSET_ID.clone(), ROBINHOOD_USDG_ASSET_ID.clone()])
+        );
+    }
+}

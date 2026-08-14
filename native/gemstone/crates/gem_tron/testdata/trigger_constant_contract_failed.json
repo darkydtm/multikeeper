@@ -1,0 +1,6 @@
+{
+  "result": {
+    "code": "CONTRACT_VALIDATE_ERROR",
+    "message": "Smart contract is not exist."
+  }
+}
