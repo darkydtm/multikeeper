@@ -208,10 +208,35 @@ data class WalletEntity(
     }
 }
 
-@Parcelize
 data class WalletAccount(
     val chain: String,
     val address: String,
     val publicKey: String? = null,
     val derivationPath: String? = null,
-) : Parcelable
+): Parcelable {
+
+    private constructor(parcel: Parcel) : this(
+        chain = parcel.readString()!!,
+        address = parcel.readString()!!,
+        publicKey = parcel.readString(),
+        derivationPath = parcel.readString(),
+    )
+
+    override fun writeToParcel(parcel: Parcel, flags: Int) {
+        parcel.writeString(chain)
+        parcel.writeString(address)
+        parcel.writeString(publicKey)
+        parcel.writeString(derivationPath)
+    }
+
+    override fun describeContents(): Int = 0
+
+    companion object {
+        @JvmField
+        val CREATOR = object : Parcelable.Creator<WalletAccount> {
+            override fun createFromParcel(parcel: Parcel) = WalletAccount(parcel)
+
+            override fun newArray(size: Int): Array<WalletAccount?> = arrayOfNulls(size)
+        }
+    }
+}
