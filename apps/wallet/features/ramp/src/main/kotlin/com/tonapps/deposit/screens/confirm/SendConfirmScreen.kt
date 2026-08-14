@@ -559,7 +559,7 @@ private fun FeeIcon(fee: SendFee) {
             painterResource(UIKitIcon.ic_flash_24),
             color = UIKit.colorScheme.accent.green,
         )
-        is SendFee.Ton, is SendFee.TronTon -> MoonItemImage(
+        is SendFee.Ton, is SendFee.TronTon, is SendFee.Gem -> MoonItemImage(
             painterResource(UIKitIcon.ic_gram_symbol),
             size = 24.dp,
         )
@@ -582,6 +582,7 @@ private fun feeTitle(fee: SendFee): String {
         is SendFee.Gasless -> fee.amount.token.symbol
         is SendFee.TronTrx -> fee.amount.token.symbol
         is SendFee.TronTon -> "TON"
+        is SendFee.Gem -> fee.amount.token.symbol
     }
 }
 

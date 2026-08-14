@@ -189,6 +189,7 @@ class ConfirmFeature(
             is SendFee.Battery -> Events.WithdrawFlow.WithdrawFlowFeePaidIn.Battery
             is SendFee.TronTrx -> Events.WithdrawFlow.WithdrawFlowFeePaidIn.Trx
             is SendFee.TronTon -> Events.WithdrawFlow.WithdrawFlowFeePaidIn.Ton
+            is SendFee.Gem -> Events.WithdrawFlow.WithdrawFlowFeePaidIn.Ton
             null -> Events.WithdrawFlow.WithdrawFlowFeePaidIn.Ton
         }
     }
@@ -208,6 +209,7 @@ class ConfirmFeature(
             is SendFee.Battery -> Events.SendNative.SendNativeFeePaidIn.Battery
             is SendFee.TronTrx -> Events.SendNative.SendNativeFeePaidIn.Trx
             is SendFee.TronTon -> Events.SendNative.SendNativeFeePaidIn.Ton
+            is SendFee.Gem -> Events.SendNative.SendNativeFeePaidIn.Ton
             null -> Events.SendNative.SendNativeFeePaidIn.Ton
         }
     }
