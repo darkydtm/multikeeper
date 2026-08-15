@@ -600,7 +600,8 @@ class SendViewModel(
                     tokens.firstOrNull { it.isTon }
                 }
                 ?: tokenAddress?.let { tokenRepository.getToken(tokenAddress, wallet.network) }
-                ?: TokenEntity.TON
+                    ?.let { AccountTokenEntity.createEmpty(it, wallet.address) }
+                ?: AccountTokenEntity.createEmpty(TokenEntity.TON, wallet.address)
         }.flowOn(Dispatchers.IO).onEach { token ->
             userInputToken(token.token)
             applyAmount(amount)
