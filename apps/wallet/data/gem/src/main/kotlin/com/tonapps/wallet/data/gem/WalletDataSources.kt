@@ -162,7 +162,7 @@ class GemWalletDataSource(
 			} else {
 				tokenBalances[assetId.toAssetId(chain)] ?: tokenBalances[assetId]
 			}
-			assetId.toWalletAsset(chain, balance, manualMetadata[assetId.toAssetId(chain)])
+			assetId.toWalletAsset(chain, balance, manualMetadata[assetId.toAssetId(chain)] ?: AssetMetadata.Unknown)
 		})
 	}
 
