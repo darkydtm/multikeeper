@@ -704,6 +704,7 @@ class InitViewModel(
 
                 val wallets = mutableListOf<WalletEntity>()
                 when (type) {
+                    InitArgs.Type.GemNew, InitArgs.Type.GemImport -> Unit
                     InitArgs.Type.Watch -> wallets.add(saveWatchWallet())
                     InitArgs.Type.New -> wallets.add(newWallet(context))
                     InitArgs.Type.Import, InitArgs.Type.Testnet, InitArgs.Type.Tetra -> wallets.addAll(
@@ -821,8 +822,8 @@ class InitViewModel(
 		publicKey = EmptyPrivateKeyEd25519.publicKey(),
 		type = WalletType.Gem,
 		version = WalletVersion.V5R1,
-		label = Wallet.Label(
-			name = label?.name.orEmpty(),
+                label = Wallet.Label(
+                    accountName = label?.name.orEmpty(),
 			emoji = label?.emoji.orEmpty(),
 			color = label?.color ?: 0,
 		),
