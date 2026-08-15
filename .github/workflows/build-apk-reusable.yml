@@ -53,8 +53,12 @@ jobs:
       - name: Setup Android NDK
         shell: bash
         run: |
+          set +o pipefail
           yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;29.0.13599879"
+          status=${PIPESTATUS[1]}
+          set -o pipefail
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/29.0.13599879" >> "$GITHUB_ENV"
+          exit "$status"
 
       - name: Setup cargo-ndk
         run: cargo install cargo-ndk --version 4.1.2 --locked
