@@ -1762,7 +1762,7 @@ class SendViewModel(
 
     private suspend fun signGem() {
         val transaction = gemTransaction ?: throw IllegalStateException("Gem transaction is null")
-        gemSendCoordinator.submit(transaction).getOrThrow()
+        gemSendCoordinator.submitAndWait(transaction).getOrThrow()
     }
 
     private suspend fun send(

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/gem_import_chain" />
+
+    <Spinner
+        android:id="@+id/chain"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+
+    <EditText
+        android:id="@+id/asset_id"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="@string/gem_import_asset_id"
+        android:inputType="text" />
+
+    <EditText
+        android:id="@+id/name"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="@string/gem_import_name"
+        android:inputType="textCapWords" />
+
+    <EditText
+        android:id="@+id/symbol"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="@string/gem_import_symbol"
+        android:inputType="textCapCharacters" />
+
+    <EditText
+        android:id="@+id/decimals"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="@string/gem_import_decimals"
+        android:inputType="number" />
+</LinearLayout>

@@ -24,6 +24,7 @@ import com.tonapps.wallet.data.token.TokenRepository
 import com.tonapps.wallet.data.token.entities.AccountTokenEntity
 import com.tonapps.wallet.data.token.entities.TokenRateEntity
 import com.tonapps.wallet.data.gem.Chain as GemChain
+import com.tonapps.wallet.data.gem.AssetMetadata as GemAssetMetadata
 import com.tonapps.wallet.data.gem.GemWalletDataSource
 import com.tonapps.wallet.data.gem.WalletId as GemWalletId
 import kotlinx.coroutines.CoroutineScope
@@ -195,8 +196,7 @@ class AssetsManager(
                 ?.associateBy { it.asset.id.value }
                 .orEmpty()
             assets.map { asset ->
-                val metadata = asset.asset.metadata
-                val known = metadata as? com.tonapps.wallet.data.gem.AssetMetadata.Known
+                val known = asset.asset.metadata as? GemAssetMetadata.Known
                 val token = TokenEntity(
                     blockchain = Blockchain.GEM,
                     address = "${chain.key}:${asset.asset.id.value}",

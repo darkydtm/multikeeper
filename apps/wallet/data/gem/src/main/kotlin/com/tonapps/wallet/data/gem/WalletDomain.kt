@@ -57,6 +57,7 @@ sealed interface AssetMetadata {
 		val symbol: String,
 		val name: String,
 		val decimals: Int,
+		val imageUrl: String? = null,
 	) : AssetMetadata
 }
 
@@ -76,6 +77,13 @@ data class TransactionRecord(
 	val fee: String? = null,
 	val timestamp: Long? = null,
 	val state: TransactionState = TransactionState.Pending,
+	val feeAssetId: AssetId? = null,
+	val from: String? = null,
+	val to: String? = null,
+	val memo: String? = null,
+	val type: String? = null,
+	val direction: String? = null,
+	val metadata: AssetMetadata = AssetMetadata.Unknown,
 ) {
 	val cacheKey: String
 		get() = "${walletId.value}:${chain.key}:${provider.key}:${hash ?: gemId}"

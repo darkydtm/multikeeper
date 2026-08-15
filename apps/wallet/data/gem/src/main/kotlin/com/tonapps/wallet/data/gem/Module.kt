@@ -157,12 +157,15 @@ val gemModule = module {
 		)
 	}
 	single { GemWalletRegistry(get<SecurityStorageBox>()) }
+	single { GemTokenRepository(get<SecurityStorageBox>()) }
+	single { CoinGeckoAttributesResolver(client = get(named(GEM_HTTP_CLIENT))) }
 	single {
 		GemWalletDataSource(
 			backend = get(),
 			walletRegistry = get(),
 			balanceReader = get(),
 			transactionBridge = get(),
+			tokenRepository = get(),
 		)
 	}
 	single<WalletDataSource> { get<GemWalletDataSource>() }

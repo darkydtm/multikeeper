@@ -81,6 +81,14 @@
     <string name="payment_method">Payment Method</string>
     <string name="downloading">Downloading…</string>
     <string name="required">Required</string>
+    <string name="gem_import_token">Import token</string>
+    <string name="gem_import_action">Import</string>
+    <string name="gem_import_chain">Chain</string>
+    <string name="gem_import_asset_id">Token ID or contract</string>
+    <string name="gem_import_name">Token name</string>
+    <string name="gem_import_symbol">Token symbol</string>
+    <string name="gem_import_decimals">Decimals</string>
+    <string name="gem_import_invalid">Unable to import token: %1$s</string>
 
     <string name="send_transaction_detail_nfts">The total value of the tokens you send. NFTs will also be sent.</string>
     <string name="close">Close</string>

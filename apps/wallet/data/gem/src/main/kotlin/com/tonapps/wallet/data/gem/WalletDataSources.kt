@@ -105,6 +105,7 @@ class GemWalletDataSource(
 	private val walletRegistry: GemWalletRegistry? = null,
 	private val balanceReader: GemBalanceReader? = null,
 	private val transactionBridge: GemstoneTransactionBridge? = null,
+	private val tokenRepository: GemTokenRepository? = null,
 ) : WalletDataSource {
 	override suspend fun getPortfolio(walletId: WalletId, chain: Chain): Result<WalletPortfolio> = runRead(chain) {
 		val assets = getAssets(walletId, chain).getOrElse { return@runRead Result.failure(it) }
@@ -129,11 +130,18 @@ class GemWalletDataSource(
 	}
 
 	override suspend fun getAssets(walletId: WalletId, chain: Chain): Result<List<WalletAsset>> = runRead(chain) {
-		val assetIds = backend.getAssets(walletId, 0).getOrElse { return@runRead Result.failure(it) }
+		val manualTokens = tokenRepository?.get(walletId, chain).orEmpty()
+		val assetIds = backend.getAssets(walletId, 0).getOrElse {
+			if (manualTokens.isEmpty()) return@runRead Result.failure(it)
+			emptyList()
+		}
 		val address = walletRegistry?.load(walletId)?.accounts
 			?.firstOrNull { it.chain == chain }
 			?.address
-		val chainAssets = assetIds.filter { it.belongsTo(chain) }
+		val chainAssets = (assetIds + manualTokens.map { "${chain.key}_${it.assetId}" })
+			.filter { it.belongsTo(chain) }
+			.distinct()
+		val manualMetadata = manualTokens.associate { it.assetId to it.metadata }
 		val tokenBalances = if (address != null && balanceReader != null && chainAssets.any { !it.isNativeAsset() }) {
 			balanceReader.getTokenBalances(
 				chain,
@@ -154,7 +162,7 @@ class GemWalletDataSource(
 			} else {
 				tokenBalances[assetId.toAssetId(chain)] ?: tokenBalances[assetId]
 			}
-			assetId.toWalletAsset(chain, balance)
+			assetId.toWalletAsset(chain, balance, manualMetadata[assetId.toAssetId(chain)])
 		})
 	}
 
@@ -163,10 +171,10 @@ class GemWalletDataSource(
 		chain: Chain,
 		fromTimestamp: Long,
 	): Result<List<TransactionRecord>> = runRead(chain) {
-		backend.getTransactions(walletId, fromTimestamp).map { response ->
+		backend.getTransactions(walletId, fromTimestamp / 1000L).map { response ->
 			response?.transactions.orEmpty()
 				.filter { it.assetId.belongsTo(chain) }
-				.map { it.toTransactionRecord(walletId, chain) }
+				.map { it.toTransactionRecord(walletId, chain, tokenRepository?.get(walletId, chain).orEmpty()) }
 		}
 	}
 
@@ -179,7 +187,7 @@ class GemWalletDataSource(
 			if (!transaction.assetId.belongsTo(chain)) {
 				throw IllegalArgumentException("Transaction does not belong to requested Gem chain")
 			}
-			val record = transaction.toTransactionRecord(walletId, chain)
+			val record = transaction.toTransactionRecord(walletId, chain, tokenRepository?.get(walletId, chain).orEmpty())
 			TransactionStatus(walletId, chain, transactionId, record.state)
 		}
 	}
@@ -239,24 +247,42 @@ class GemWalletDataSource(
 
 private val supportedGemChainKeys = setOf("bitcoin", "ethereum", "smartchain", "solana")
 
-private fun String.toWalletAsset(chain: Chain, amount: String? = null): WalletAsset {
+private fun String.toWalletAsset(
+	chain: Chain,
+	amount: String? = null,
+	metadata: AssetMetadata = AssetMetadata.Unknown,
+): WalletAsset {
 	val value = toAssetId(chain)
-	return WalletAsset(Asset(AssetId(chain, value)), Balance(amount))
+	return WalletAsset(Asset(AssetId(chain, value), metadata), Balance(amount))
 }
 
 private fun GemPortfolioAllocation.toWalletAsset(chain: Chain): WalletAsset =
 	WalletAsset(Asset(AssetId(chain, assetId.toAssetId(chain))), Balance(value.toString()))
 
-private fun GemTransaction.toTransactionRecord(walletId: WalletId, chain: Chain): TransactionRecord {
+private fun GemTransaction.toTransactionRecord(
+	walletId: WalletId,
+	chain: Chain,
+	manualTokens: List<GemToken>,
+): TransactionRecord {
 	val normalizedAssetId = assetId.toAssetId(chain)
+	val metadata = manualTokens.firstOrNull { it.assetId == normalizedAssetId }?.metadata
+		?: chain.nativeMetadata()
 	return TransactionRecord(
 		walletId = walletId,
 		chain = chain,
 		assetId = AssetId(chain, normalizedAssetId),
 		gemId = id,
+		hash = id,
 		amount = value,
 		fee = fee,
 		timestamp = runCatching { Instant.parse(createdAt).toEpochMilli() }.getOrNull(),
+		feeAssetId = feeAssetId.toAssetId(chain).let { AssetId(chain, it) },
+		from = from,
+		to = to,
+		memo = memo,
+		type = type,
+		direction = direction,
+		metadata = metadata,
 		state = when (state.lowercase()) {
 			"confirmed", "completed", "success" -> TransactionState.Confirmed
 			"in_transit", "in transit" -> TransactionState.InTransit
@@ -266,6 +292,14 @@ private fun GemTransaction.toTransactionRecord(walletId: WalletId, chain: Chain)
 			else -> TransactionState.Unknown
 		},
 	)
+}
+
+private fun Chain.nativeMetadata(): AssetMetadata.Known = when (this) {
+	Chain.Bitcoin -> AssetMetadata.Known("BTC", "Bitcoin", 8)
+	Chain.Ethereum -> AssetMetadata.Known("ETH", "Ethereum", 18)
+	Chain.SmartChain -> AssetMetadata.Known("BNB", "BNB Smart Chain", 18)
+	Chain.Solana -> AssetMetadata.Known("SOL", "Solana", 9)
+	Chain.Ton -> AssetMetadata.Known("TON", "Toncoin", 9)
 }
 
 private fun String.toAssetId(chain: Chain): String {

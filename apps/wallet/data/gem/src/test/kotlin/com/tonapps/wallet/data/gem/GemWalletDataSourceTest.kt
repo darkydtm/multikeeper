@@ -19,6 +19,46 @@ class GemWalletDataSourceTest {
 	}
 
 	@Test
+	fun `manual token is loaded with metadata and balance`() = runBlocking {
+		val tokenRepository = GemTokenRepository(InMemoryTokenStorage()).also {
+			it.upsert(
+				GemToken(
+					walletId = WalletId("wallet"),
+					chain = Chain.Ethereum,
+					assetId = "0xusdt",
+					metadata = AssetMetadata.Known("USDT", "Tether USD", 6),
+				),
+			)
+		}
+		val wallet = GemWallet(
+			walletId = WalletId("wallet"),
+			keystoreId = "keystore",
+			accounts = listOf(ChainAccount(WalletId("wallet"), Chain.Ethereum, "0xsender")),
+		)
+		val source = GemWalletDataSource(
+			backend = FakeGemBackend(),
+			walletRegistry = GemWalletRegistry(InMemoryRegistryStorage().also { it.persist(wallet) }),
+			tokenRepository = tokenRepository,
+			balanceReader = object : GemBalanceReader {
+				override suspend fun getTokenBalances(
+					chain: Chain,
+					address: String,
+					tokenIds: List<String>,
+				): Result<Map<String, String>> {
+					assertEquals(listOf("0xusdt"), tokenIds)
+					return Result.success(mapOf("0xusdt" to "1234567"))
+				}
+			},
+		)
+
+		val asset = source.getAssets(WalletId("wallet"), Chain.Ethereum).getOrThrow().single()
+
+		assertEquals(AssetId(Chain.Ethereum, "0xusdt"), asset.asset.id)
+		assertEquals(AssetMetadata.Known("USDT", "Tether USD", 6), asset.asset.metadata)
+		assertEquals("1234567", asset.balance.amount)
+	}
+
+	@Test
 	fun `native asset uses Gemstone balance when account is registered`() = runBlocking {
 		val wallet = GemWallet(
 			walletId = WalletId("wallet"),
@@ -126,6 +166,11 @@ class GemWalletDataSourceTest {
 		assertEquals(amount, transaction.amount)
 		assertEquals(fee, transaction.fee)
 		assertEquals(1700000000000L, transaction.timestamp)
+		assertEquals("transaction", transaction.hash)
+		assertEquals("from", transaction.from)
+		assertEquals("to", transaction.to)
+		assertEquals(AssetMetadata.Known("ETH", "Ethereum", 18), transaction.metadata)
+		assertEquals(AssetId(Chain.Ethereum, "native"), transaction.feeAssetId)
 	}
 
 	@Test
@@ -251,6 +296,17 @@ class GemWalletDataSourceTest {
 		override fun delete(): Boolean {
 			value = null
 			return true
+		}
+	}
+
+	private class InMemoryTokenStorage : GemTokenStorage {
+		private var value: String? = null
+
+		override fun read(): String? = value
+
+		override fun write(value: String): Boolean {
+		this.value = value
+		return true
 		}
 	}
 }

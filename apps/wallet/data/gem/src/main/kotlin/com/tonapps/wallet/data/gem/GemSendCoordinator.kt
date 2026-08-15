@@ -1,5 +1,7 @@
 package com.tonapps.wallet.data.gem
 
+import kotlinx.coroutines.delay
+
 sealed interface GemSendState {
 	data object Editing : GemSendState
 	data object Loading : GemSendState
@@ -12,7 +14,9 @@ sealed interface GemSendState {
 }
 
 class GemSendCoordinator(
-	private val dataSource: GemWalletDataSource,
+	private val dataSource: WalletDataSource,
+	private val pollDelayMillis: Long = 1_000,
+	private val maxPolls: Int = 30,
 ) {
 	suspend fun preloadState(draft: TransactionDraft): GemSendState {
 		return dataSource.preloadTransaction(draft).fold(
@@ -25,7 +29,7 @@ class GemSendCoordinator(
 		dataSource.preloadTransaction(draft)
 
 	suspend fun submitState(transaction: PreloadedTransaction): GemSendState {
-		return submit(transaction).fold(
+		return submitAndWait(transaction).fold(
 			onSuccess = { GemSendState.Submitted(it) },
 			onFailure = { GemSendState.Failed(it.toGemError()) },
 		)
@@ -34,6 +38,34 @@ class GemSendCoordinator(
 	suspend fun submit(transaction: PreloadedTransaction): Result<BroadcastedTransaction> {
 		val signed = dataSource.signTransaction(transaction).getOrElse { return Result.failure(it) }
 		return dataSource.broadcastTransaction(signed)
+	}
+
+	suspend fun submitAndWait(transaction: PreloadedTransaction): Result<BroadcastedTransaction> {
+		val broadcasted = submit(transaction).getOrElse { return Result.failure(it) }
+		if (broadcasted.transactionIds.isEmpty()) {
+			return Result.failure(WalletDataSourceException(GemError.BroadcastFailed("Gem gateway returned no transaction IDs")))
+		}
+
+		for (poll in 0 until maxPolls) {
+			val statuses = mutableListOf<TransactionStatus>()
+			for (transactionId in broadcasted.transactionIds) {
+				val status = dataSource.getTransactionStatus(
+					walletId = broadcasted.walletId,
+					chain = broadcasted.chain,
+					transactionId = transactionId,
+				).getOrElse { return Result.failure(it) }
+				statuses += status
+			}
+			when {
+				statuses.any { it.state == TransactionState.Failed || it.state == TransactionState.Reverted } -> {
+					return Result.failure(WalletDataSourceException(GemError.BroadcastFailed("Gem transaction was rejected")))
+				}
+				statuses.all { it.state == TransactionState.Confirmed } -> return Result.success(broadcasted)
+			}
+			if (pollDelayMillis > 0) delay(pollDelayMillis)
+		}
+
+		return Result.failure(WalletDataSourceException(GemError.StatusUnknown))
 	}
 
 	companion object {

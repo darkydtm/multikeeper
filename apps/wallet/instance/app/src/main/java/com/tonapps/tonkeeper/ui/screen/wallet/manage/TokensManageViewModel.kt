@@ -2,39 +2,60 @@ package com.tonapps.tonkeeper.ui.screen.wallet.manage
 
 import android.app.Application
 import androidx.lifecycle.viewModelScope
+import com.tonapps.blockchain.model.legacy.WalletEntity
 import com.tonapps.legacy.enteties.AssetsEntity
 import com.tonapps.legacy.enteties.AssetsExtendedEntity
 import com.tonapps.tonkeeper.extensions.isSafeModeEnabled
+import com.tonapps.tonkeeper.manager.assets.AssetsManager
 import com.tonapps.tonkeeper.ui.base.BaseWalletVM
 import com.tonapps.tonkeeper.ui.screen.wallet.manage.list.Item
 import com.tonapps.uikit.list.ListCell
-import com.tonapps.wallet.api.API
-import com.tonapps.blockchain.model.legacy.WalletEntity
 import com.tonapps.wallet.data.settings.SettingsRepository
 import com.tonapps.wallet.data.token.TokenRepository
+import com.tonapps.wallet.data.gem.CoinGeckoAttributesResolver
+import com.tonapps.wallet.data.gem.GemTokenImport
+import com.tonapps.wallet.data.gem.GemTokenRepository
+import com.tonapps.wallet.data.gem.toGemToken
 import com.tonapps.wallet.localization.Localization
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class TokensManageViewModel(
     app: Application,
     private val wallet: WalletEntity,
     private val settingsRepository: SettingsRepository,
     private val tokenRepository: TokenRepository,
-    private val api: API,
+    private val assetsManager: AssetsManager,
+    private val gemTokenRepository: GemTokenRepository,
+    private val coinGeckoAttributesResolver: CoinGeckoAttributesResolver,
 ): BaseWalletVM(app) {
 
-    private val safeMode: Boolean = settingsRepository.isSafeModeEnabled(wallet.network)
+	val isGemWallet: Boolean
+		get() = wallet.isGem
 
-    private val tokensFlow = settingsRepository.tokenPrefsChangedFlow.map { _ ->
-        tokenRepository.mustGet(settingsRepository.currency, wallet.accountId, wallet.network).mapNotNull { token ->
-            if (safeMode && !token.verified) {
+    private val safeMode: Boolean = settingsRepository.isSafeModeEnabled(wallet.network)
+	private val refreshFlow = MutableStateFlow(0)
+
+    private val tokensFlow = combine(settingsRepository.tokenPrefsChangedFlow, refreshFlow) { _, _ ->
+        val regularTokens = if (wallet.isGem) {
+            emptyList()
+        } else {
+            tokenRepository.mustGet(settingsRepository.currency, wallet.accountId, wallet.network)
+        }
+		val gemTokens = if (wallet.isGem) loadGemTokens() else emptyList()
+		(regularTokens + gemTokens).mapNotNull { token ->
+			if (wallet.isGem && token.address.endsWith(":native")) {
+				return@mapNotNull null
+			}
+			if (!wallet.isGem && safeMode && !token.verified) {
                 return@mapNotNull null
             }
             AssetsExtendedEntity(
@@ -124,4 +145,26 @@ class TokensManageViewModel(
             settingsRepository.setTokenHidden(wallet.id, tokenAddress, hidden)
         }
     }
+
+	fun importGemToken(input: GemTokenImport, onSuccess: () -> Unit, onError: (Throwable) -> Unit) {
+		viewModelScope.launch(Dispatchers.IO) {
+			val token = input.toGemToken(coinGeckoAttributesResolver).getOrElse {
+				withContext(Dispatchers.Main.immediate) { onError(it) }
+				return@launch
+			}
+			try {
+				gemTokenRepository.upsert(token)
+			} catch (error: Throwable) {
+				withContext(Dispatchers.Main.immediate) { onError(error) }
+				return@launch
+			}
+			refreshFlow.value++
+			withContext(Dispatchers.Main.immediate) { onSuccess() }
+		}
+	}
+
+	private suspend fun loadGemTokens() = assetsManager
+		.getTokens(wallet, settingsRepository.currency, refresh = true)
+		.map { it.token }
+
 }
