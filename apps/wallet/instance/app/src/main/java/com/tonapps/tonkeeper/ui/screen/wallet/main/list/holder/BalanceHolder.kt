@@ -17,6 +17,7 @@ import com.tonapps.icu.CurrencyFormatter.withCustomSymbol
 import com.tonapps.tonkeeper.api.shortAddress
 import com.tonapps.tonkeeper.core.BalanceType
 import com.tonapps.tonkeeper.extensions.badgeGreen
+import com.tonapps.tonkeeper.extensions.badgeDefault
 import com.tonapps.tonkeeper.extensions.badgeOrange
 import com.tonapps.tonkeeper.extensions.badgePurple
 import com.tonapps.tonkeeper.extensions.copyWithToast
@@ -214,9 +215,7 @@ class BalanceHolder(
             WalletType.Watch -> builder.badgeOrange(context, Localization.watch_only)
             WalletType.Keystone -> builder.badgePurple(context, Localization.keystone)
             WalletType.Tetra -> builder.badgeOrange(context, Localization.tetra)
-            WalletType.Gem -> builder.badgeDefault(context) {
-                append(context.getString(Localization.wallet).uppercase())
-            }
+            WalletType.Gem -> builder.badgeDefault(context, Localization.wallet)
             WalletType.Default -> builder
             WalletType.Lockup -> builder
         }
