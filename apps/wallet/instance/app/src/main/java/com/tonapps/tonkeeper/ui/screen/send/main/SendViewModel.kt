@@ -602,8 +602,8 @@ class SendViewModel(
                 ?: tokenAddress?.let { tokenRepository.getToken(tokenAddress, wallet.network) }
                 ?: TokenEntity.TON
         }.flowOn(Dispatchers.IO).onEach { token ->
-            userInputToken(token)
-            applyAmount(token, amount)
+            userInputToken(token.token)
+            applyAmount(amount)
         }.launchIn(viewModelScope)
 
         _userInputFlow.update {
@@ -615,7 +615,7 @@ class SendViewModel(
         api.resolveAccount(targetAddress, wallet.network)?.memoRequired == true
     }
 
-    private fun applyAmount(token: TokenEntity, amount: Coins?) {
+    private fun applyAmount(amount: Coins?) {
         amount?.let {
             _uiInputAmountFlow.tryEmit(it)
         }
@@ -980,7 +980,7 @@ class SendViewModel(
             ?: throw IllegalStateException("Gem sender address is missing")
         val destination = destinationFlow.value as? SendDestination.GemAccount
             ?: throw IllegalStateException("Destination is not a Gem account")
-        val amount = userInputFlow.value.amount.movePointRight(token.decimals).toBigIntegerExact().toString()
+        val amount = userInputFlow.value.amount.toNano(token.decimals)
         val metadata = GemAssetMetadata.Known(token.symbol, token.name, token.decimals)
         val draft = GemSendCoordinator.draft(
             walletId = GemWalletId(wallet.id),
