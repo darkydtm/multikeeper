@@ -12,6 +12,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.tonapps.tonkeeper.koin.walletViewModel
 import com.tonapps.tonkeeper.ui.base.BaseListWalletScreen
 import com.tonapps.tonkeeper.ui.base.ScreenContext
+import com.tonapps.tonkeeper.extensions.toast
 import com.tonapps.tonkeeper.ui.screen.wallet.manage.list.Adapter
 import com.tonapps.tonkeeper.ui.screen.wallet.manage.list.Item
 import com.tonapps.tonkeeper.ui.screen.wallet.manage.list.holder.Holder
