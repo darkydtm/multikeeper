@@ -4,7 +4,11 @@ import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
@@ -30,6 +34,129 @@ class GemRuntimeCoordinatorTest {
 		assertEquals(
 			GemRefreshEvent.Balances(WalletId("wallet"), setOf(Chain.Ethereum)),
 			event.await(),
+		)
+	}
+
+	@Test
+	fun `delivers a refresh event to a late subscriber`() = runBlocking {
+		val coordinator = coordinator()
+		coordinator.processEvent(
+			GemWebSocketEvent.Balances(
+				listOf(GemBalanceInvalidation("wallet", "ethereum_native")),
+			),
+		)
+
+		assertEquals(
+			GemRefreshEvent.Balances(WalletId("wallet"), setOf(Chain.Ethereum)),
+			coordinator.refreshEvents.first(),
+		)
+	}
+
+	@Test
+	fun `coalesces balance and transaction invalidations for active subscribers`() = runBlocking {
+		val coordinator = coordinator()
+		val firstEvents = async(start = CoroutineStart.UNDISPATCHED) {
+			coordinator.refreshEvents.take(2).toList()
+		}
+		val secondEvents = async(start = CoroutineStart.UNDISPATCHED) {
+			coordinator.refreshEvents.take(2).toList()
+		}
+
+		coordinator.processEvent(
+			GemWebSocketEvent.Balances(
+				listOf(
+					GemBalanceInvalidation("wallet", "ethereum_native"),
+					GemBalanceInvalidation("wallet", "ethereum_native"),
+					GemBalanceInvalidation("wallet", "bitcoin_native"),
+				),
+			),
+		)
+		coordinator.processEvent(GemWebSocketEvent.Transactions("wallet", listOf("tx-1", "tx-1")))
+
+		assertEquals(
+			listOf(
+				GemRefreshEvent.Balances(WalletId("wallet"), setOf(Chain.Ethereum, Chain.Bitcoin)),
+				GemRefreshEvent.Transactions(WalletId("wallet"), setOf("tx-1")),
+			),
+			firstEvents.await(),
+		)
+		assertEquals(firstEvents.await(), secondEvents.await())
+	}
+
+	@Test
+	fun `delivers repeated balance and transaction invalidations`() = runBlocking {
+		val coordinator = coordinator()
+		val events = async(start = CoroutineStart.UNDISPATCHED) {
+			coordinator.refreshEvents.take(4).toList()
+		}
+
+		repeat(2) {
+			coordinator.processEvent(
+				GemWebSocketEvent.Balances(
+					listOf(GemBalanceInvalidation("wallet", "ethereum_native")),
+				),
+			)
+			coordinator.processEvent(GemWebSocketEvent.Transactions("wallet", listOf("tx-1", "tx-1")))
+		}
+
+		assertEquals(
+			listOf(
+				GemRefreshEvent.Balances(WalletId("wallet"), setOf(Chain.Ethereum)),
+				GemRefreshEvent.Transactions(WalletId("wallet"), setOf("tx-1")),
+				GemRefreshEvent.Balances(WalletId("wallet"), setOf(Chain.Ethereum)),
+				GemRefreshEvent.Transactions(WalletId("wallet"), setOf("tx-1")),
+			),
+			events.await(),
+		)
+	}
+
+	@Test
+	fun `bounds replay to the latest refresh events`() = runBlocking {
+		val coordinator = coordinator()
+		repeat(65) { index ->
+			coordinator.processEvent(GemWebSocketEvent.Transactions("wallet", listOf("tx-$index")))
+		}
+
+		val events = coordinator.refreshEvents.take(64).toList()
+
+		assertEquals(
+			(1..64).map { GemRefreshEvent.Transactions(WalletId("wallet"), setOf("tx-$it")) },
+			events,
+		)
+	}
+
+	@Test
+	fun `delivers a reinserted wallet refresh to a slow subscriber`() = runBlocking {
+		val coordinator = coordinator()
+		val events = mutableListOf<GemRefreshEvent>()
+		val firstEvent = CompletableDeferred<Unit>()
+		val release = CompletableDeferred<Unit>()
+		val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+			coordinator.refreshEvents.take(66).collect { event ->
+				events += event
+				if (events.size == 1) {
+					firstEvent.complete(Unit)
+					release.await()
+				}
+			}
+		}
+
+		coordinator.processEvent(GemWebSocketEvent.Transactions("wallet-0", listOf("tx-0")))
+		firstEvent.await()
+		repeat(64) { index ->
+			coordinator.processEvent(GemWebSocketEvent.Transactions("wallet-${index + 1}", listOf("tx-${index + 1}")))
+		}
+		val reinsert = async {
+			coordinator.processEvent(GemWebSocketEvent.Transactions("wallet-0", listOf("tx-0")))
+		}
+		release.complete(Unit)
+		reinsert.await()
+		collector.join()
+
+		assertEquals(66, events.size)
+		assertEquals(
+			GemRefreshEvent.Transactions(WalletId("wallet-0"), setOf("tx-0")),
+			events.last(),
 		)
 	}
 
