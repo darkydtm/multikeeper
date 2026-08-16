@@ -35,7 +35,7 @@ import com.tonapps.wallet.data.passcode.PasscodeManager
 import com.tonapps.wallet.data.settings.SettingsRepository
 import com.tonapps.wallet.data.gem.GemWalletDataSource
 import com.tonapps.wallet.data.gem.GemRuntimeCoordinator
-import com.tonapps.wallet.data.gem.GemWebSocketEvent
+import com.tonapps.wallet.data.gem.GemRefreshEvent
 import com.tonapps.tonkeeper.ui.screen.events.compose.history.paging.GemHistoryMapper
 import com.tonapps.wallet.localization.Localization
 import kotlinx.coroutines.Dispatchers
@@ -144,8 +144,8 @@ class TxEventsViewModel(
 			selectFilterById()
 		}
 
-		gemRuntimeCoordinator.events.collectFlow { event ->
-			if (wallet.isGem && event is GemWebSocketEvent.Transactions && event.walletId == wallet.id) {
+		gemRuntimeCoordinator.refreshEvents.collectFlow { event ->
+			if (wallet.isGem && event is GemRefreshEvent.Transactions && event.walletId.value == wallet.id) {
 				requestRefresh()
 				selectFilterById()
 			}

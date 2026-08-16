@@ -4,38 +4,74 @@ import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class GemRuntimeCoordinatorTest {
 	@Test
-	fun `authoritative refresh stores balance invalidations`() = runBlocking {
-		val store = GemAuthoritativeRefreshStore(object : GemBackendReader {
-			override suspend fun getAssets(walletId: WalletId, fromTimestamp: Long): Result<List<String>> = Result.success(emptyList())
+	fun `emits a chain-aware balance refresh event`() = runBlocking {
+		val coordinator = coordinator()
+		val event = async(start = CoroutineStart.UNDISPATCHED) {
+			coordinator.refreshEvents.first()
+		}
 
-			override suspend fun getTransactions(
-				walletId: WalletId,
-				fromTimestamp: Long,
-				assetId: String?,
-			): Result<GemTransactionsResponse?> = Result.success(null)
+		coordinator.processEvent(
+			GemWebSocketEvent.Balances(
+				listOf(GemBalanceInvalidation("wallet", "ethereum_native")),
+			),
+		)
 
-			override suspend fun getTransaction(transactionId: String): Result<GemTransaction> =
-				Result.failure(IllegalArgumentException("Transaction not found"))
+		assertEquals(
+			GemRefreshEvent.Balances(WalletId("wallet"), setOf(Chain.Ethereum)),
+			event.await(),
+		)
+	}
 
-			override suspend fun getPortfolioAssets(
-				period: String,
-				request: GemPortfolioAssetsRequest,
-			): Result<GemPortfolioAssets> = Result.failure(IllegalArgumentException("Portfolio not found"))
-		})
-		val update = GemBalanceInvalidation("wallet", "ethereum")
+	@Test
+	fun `emits transaction refresh ids after authoritative refresh`() = runBlocking {
+		val coordinator = coordinator()
+		val event = async(start = CoroutineStart.UNDISPATCHED) {
+			coordinator.refreshEvents.first()
+		}
 
-		store.refresh(GemWebSocketEvent.Balances(listOf(update)))
+		coordinator.processEvent(
+			GemWebSocketEvent.Transactions("wallet", listOf("tx-1", "tx-1")),
+		)
 
-		assertEquals(setOf(update), store.cache.value.balanceInvalidations)
+		assertEquals(
+			GemRefreshEvent.Transactions(WalletId("wallet"), setOf("tx-1")),
+			event.await(),
+		)
+	}
+
+	@Test
+	fun `emits transaction refresh ids when authoritative refresh fails`() = runBlocking {
+		val event = CompletableDeferred<GemRefreshEvent>()
+		val coordinator = coordinator(
+			refresh = GemAuthoritativeRefresh { error("offline") },
+		)
+		val collector = async(start = CoroutineStart.UNDISPATCHED) {
+			event.complete(coordinator.refreshEvents.first())
+		}
+
+		try {
+			coordinator.processEvent(GemWebSocketEvent.Transactions("wallet", listOf("tx-1")))
+			fail("Expected authoritative refresh to fail")
+		} catch (error: IllegalStateException) {
+			assertEquals("offline", error.message)
+		}
+
+		assertEquals(
+			GemRefreshEvent.Transactions(WalletId("wallet"), setOf("tx-1")),
+			event.await(),
+		)
+		collector.cancel()
 	}
 
 	@Test
@@ -151,6 +187,20 @@ class GemRuntimeCoordinatorTest {
 			isPushEnabled = false,
 			subscriptionsVersion = 1,
 		),
+	)
+
+	private fun coordinator(
+		refresh: GemAuthoritativeRefresh = GemAuthoritativeRefresh { },
+	) = GemRuntimeCoordinator(
+		deviceRegistration = testDeviceRegistrationCoordinator(),
+		walletRegistry = GemWalletRegistry(InMemoryRegistryStorage()),
+		keystoreDeleter = GemKeystoreDeleter { },
+		subscriptionRepository = GemSubscriptionRepository(RefreshSubscriptionBackend(Result.success(null))),
+		webSocketClient = GemWebSocketClient(
+			client = OkHttpClient.Builder().build(),
+			signer = GemRequestSigner { _, _, _, _ -> "authorization" },
+		),
+		refresh = refresh,
 	)
 }
 

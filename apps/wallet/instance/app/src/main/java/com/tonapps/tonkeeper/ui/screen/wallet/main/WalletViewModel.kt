@@ -35,6 +35,9 @@ import com.tonapps.wallet.data.rates.RatesRepository
 import com.tonapps.wallet.data.settings.SettingsRepository
 import com.tonapps.wallet.data.staking.StakingRepository
 import com.tonapps.wallet.data.tx.TransactionManager
+import com.tonapps.wallet.data.gem.GemRefreshEvent
+import com.tonapps.wallet.data.gem.GemRuntimeCoordinator
+import com.tonapps.wallet.data.gem.Chain as GemChain
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -47,6 +50,8 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import uikit.extensions.collectFlow
 import java.math.BigDecimal
@@ -72,12 +77,15 @@ class WalletViewModel(
     private val pluginsRepository: PluginsRepository,
     private val stakingRepository: StakingRepository,
     private val bannerRepository: BannerRepository,
+    private val gemRuntimeCoordinator: GemRuntimeCoordinator,
 ) : BaseWalletVM(app) {
 
     val installId: String
         get() = settingsRepository.installId
 
     private var autoRefreshJob: Job? = null
+    private val gemRefreshChains = mutableSetOf<GemChain>()
+    private val gemRefreshLock = Mutex()
     private val alertNotificationsFlow = MutableStateFlow<List<NotificationEntity>>(emptyList())
 
     private val _uiLabelFlow = MutableStateFlow<Wallet.Label?>(null)
@@ -125,7 +133,7 @@ class WalletViewModel(
 
         requestDnsExpiring()
 
-		if (!wallet.isGem) {
+        if (!wallet.isGem) {
 			collectFlow(transactionManager.eventsFlow(wallet)) { event ->
 				if (event.pending) {
 					setStatus(Status.SendingTransaction)
@@ -137,6 +145,15 @@ class WalletViewModel(
 					_domainRenewFlow.value =
 						collectiblesRepository.getDnsSoonExpiring(wallet.accountId, wallet.network)
 				}
+			}
+		}
+
+		gemRuntimeCoordinator.refreshEvents.collectFlow { event ->
+			if (wallet.isGem && event is GemRefreshEvent.Balances && event.walletId.value == wallet.id) {
+				gemRefreshLock.withLock {
+					gemRefreshChains += event.chains
+				}
+				refresh()
 			}
 		}
 
@@ -437,7 +454,19 @@ class WalletViewModel(
         currency: WalletCurrency,
         refresh: Boolean
     ): State.Assets? = withContext(Dispatchers.IO) {
-        assetsManager.getAssets(wallet, currency, refresh)?.let {
+        val assets = if (refresh && wallet.isGem) {
+			gemRefreshLock.withLock {
+				val chains = gemRefreshChains.takeIf { it.isNotEmpty() }?.toSet()
+				val assets = assetsManager.getAssets(wallet, currency, refresh, chains)
+				if (chains != null) {
+					gemRefreshChains.removeAll(chains)
+				}
+				assets
+			}
+		} else {
+			assetsManager.getAssets(wallet, currency, refresh)
+		}
+        assets?.let {
             State.Assets(
                 currency = currency,
                 list = it.sort(wallet, settingsRepository),

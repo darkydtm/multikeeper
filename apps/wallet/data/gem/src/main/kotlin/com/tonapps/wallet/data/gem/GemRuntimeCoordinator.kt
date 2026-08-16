@@ -1,6 +1,7 @@
 package com.tonapps.wallet.data.gem
 
 import java.io.IOException
+import java.util.LinkedHashMap
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -32,11 +33,13 @@ class GemRuntimeCoordinator(
 ) {
 	private val _state = MutableStateFlow<GemRuntimeState>(GemRuntimeState.Idle)
 	private val _events = MutableSharedFlow<GemWebSocketEvent>(extraBufferCapacity = 64)
+	private val _refreshEvents = MutableSharedFlow<GemRefreshEvent>(replay = 64, extraBufferCapacity = 64)
 	private val refreshLock = Mutex()
 	private var started = false
 
 	val state: StateFlow<GemRuntimeState> = _state.asStateFlow()
 	val events: SharedFlow<GemWebSocketEvent> = _events.asSharedFlow()
+	val refreshEvents: SharedFlow<GemRefreshEvent> = _refreshEvents.asSharedFlow()
 
 	suspend fun persistWallet(wallet: GemWallet) = refreshLock.withLock {
 		walletRegistry.persist(wallet)
@@ -103,7 +106,7 @@ class GemRuntimeCoordinator(
 					try {
 						webSocketClient.connect().collect { event ->
 							try {
-								refresh?.refresh(event)
+								processEvent(event)
 							} catch (error: CancellationException) {
 								throw error
 							} catch (error: Throwable) {
@@ -124,14 +127,52 @@ class GemRuntimeCoordinator(
 			}
 		}
 	}
+
+	suspend fun processEvent(event: GemWebSocketEvent) {
+		var refreshError: Throwable? = null
+		try {
+			refresh?.refresh(event)
+		} catch (error: CancellationException) {
+			throw error
+		} catch (error: Throwable) {
+			refreshError = error
+		}
+		when (event) {
+			is GemWebSocketEvent.Prices -> Unit
+			is GemWebSocketEvent.Balances -> event.updates
+				.groupBy { WalletId(it.walletId) }
+				.forEach { (walletId, updates) ->
+					val chains = updates.mapNotNull { update ->
+						Chain.entries.firstOrNull {
+							it.provider == Provider.Gem && it.key == update.assetId.substringBefore('_')
+						}
+					}.toSet()
+					if (chains.isNotEmpty()) {
+						_refreshEvents.emit(GemRefreshEvent.Balances(walletId, chains))
+					}
+				}
+			is GemWebSocketEvent.Transactions -> {
+				if (event.transactionIds.isNotEmpty()) {
+					_refreshEvents.emit(
+						GemRefreshEvent.Transactions(WalletId(event.walletId), event.transactionIds.toSet()),
+					)
+				}
+			}
+		}
+		refreshError?.let { throw it }
+	}
 }
 
 fun interface GemAuthoritativeRefresh {
 	suspend fun refresh(event: GemWebSocketEvent)
 }
 
+sealed interface GemRefreshEvent {
+	data class Balances(val walletId: WalletId, val chains: Set<Chain>) : GemRefreshEvent
+	data class Transactions(val walletId: WalletId, val transactionIds: Set<String>) : GemRefreshEvent
+}
+
 data class GemRuntimeCache(
-	val balanceInvalidations: Set<GemBalanceInvalidation> = emptySet(),
 	val transactions: Map<String, GemTransaction> = emptyMap(),
 )
 
@@ -142,21 +183,33 @@ class GemAuthoritativeRefreshStore(
 
 	val cache: StateFlow<GemRuntimeCache> = _cache.asStateFlow()
 
-	override suspend fun refresh(event: GemWebSocketEvent) {
+		override suspend fun refresh(event: GemWebSocketEvent) {
 		when (event) {
 			is GemWebSocketEvent.Prices -> Unit
-			is GemWebSocketEvent.Balances -> _cache.update { current ->
-				current.copy(balanceInvalidations = current.balanceInvalidations + event.updates)
-			}
+			is GemWebSocketEvent.Balances -> Unit
 			is GemWebSocketEvent.Transactions -> {
 				val transactions = event.transactionIds.associateWith { transactionId ->
 					backend.getTransaction(transactionId).getOrThrow()
 				}
 				_cache.update { current ->
-					current.copy(transactions = current.transactions + transactions)
+					val bounded = LinkedHashMap<String, GemTransaction>(MAX_CACHE_ENTRIES)
+					current.transactions.forEach { (id, transaction) -> bounded[id] = transaction }
+					transactions.forEach { (id, transaction) ->
+						bounded.remove(id)
+						bounded[id] = transaction
+					}
+					current.copy(
+						transactions = bounded.entries
+							.takeLast(MAX_CACHE_ENTRIES)
+							.associate { it.toPair() },
+					)
 				}
 			}
 		}
+	}
+
+	private companion object {
+		const val MAX_CACHE_ENTRIES = 100
 	}
 }
 

@@ -32,7 +32,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 
 class AssetsManager(
     private val context: Context,
@@ -47,11 +50,14 @@ class AssetsManager(
 ) : EmulationUseCase.Delegate {
 
     private val cache = TotalBalanceCache(context)
+    private val gemAssetsCache = ConcurrentHashMap<String, Map<GemChain, List<AssetsEntity>>>()
+    private val gemAssetsCacheLock = Mutex()
 
     init {
         settingsRepository.tokenPrefsChangedFlow.drop(1).onEach {
             accountRepository.getSelectedWallet()?.let {
                 cache.clear(it, settingsRepository.currency)
+                gemAssetsCache.keys.removeIf { key -> key.startsWith("${it.id}:") }
             }
         }.launchIn(scope)
     }
@@ -60,8 +66,9 @@ class AssetsManager(
         wallet: WalletEntity,
         currency: WalletCurrency = settingsRepository.currency,
         refresh: Boolean,
+        gemChains: Set<GemChain>? = null,
     ): List<AssetsEntity>? {
-        if (wallet.isGem) return getGemAssets(wallet)
+        if (wallet.isGem) return getGemAssets(wallet, currency, refresh, gemChains)
         val tokens = getTokens(wallet, currency, refresh)
         var staked = getStaked(wallet, tokens.map { it.token }, currency, refresh)
 
@@ -111,7 +118,7 @@ class AssetsManager(
     suspend fun getToken(
         wallet: WalletEntity, token: String, currency: WalletCurrency = settingsRepository.currency
     ): AssetsEntity.Token? {
-        if (wallet.isGem) return getGemAssets(wallet).orEmpty().filterIsInstance<AssetsEntity.Token>().firstOrNull { it.address == token }
+        if (wallet.isGem) return getGemAssets(wallet, currency, false).filterIsInstance<AssetsEntity.Token>().firstOrNull { it.address == token }
         val tokens = getTokens(wallet, currency, false)
         return tokens.firstOrNull {
             it.token.address.equalsAddress(token)
@@ -123,7 +130,7 @@ class AssetsManager(
         accountIds: List<String>,
         currency: WalletCurrency = settingsRepository.currency
     ): List<AssetsEntity.Token> = withContext(Dispatchers.IO) {
-        if (wallet.isGem) return@withContext getGemAssets(wallet).orEmpty().filterIsInstance<AssetsEntity.Token>()
+        if (wallet.isGem) return@withContext getGemAssets(wallet, currency, false).filterIsInstance<AssetsEntity.Token>()
         if (accountIds.isEmpty()) {
             emptyList()
         } else {
@@ -139,7 +146,7 @@ class AssetsManager(
         currency: WalletCurrency = settingsRepository.currency,
         refresh: Boolean,
     ): List<AssetsEntity.Token> {
-        if (wallet.isGem) return getGemAssets(wallet).orEmpty().filterIsInstance<AssetsEntity.Token>()
+        if (wallet.isGem) return getGemAssets(wallet, currency, refresh).filterIsInstance<AssetsEntity.Token>()
         val safeMode = settingsRepository.isSafeModeEnabled(wallet.network)
         val tronAddress =
             if (wallet.hasPrivateKey && !wallet.testnet) {
@@ -186,16 +193,34 @@ class AssetsManager(
         )
     }
 
-    private suspend fun getGemAssets(wallet: WalletEntity): List<AssetsEntity> {
-        val result = wallet.accounts.flatMap { account ->
-            val chain = GemChain.entries.firstOrNull { it.key == account.chain } ?: return@flatMap emptyList()
-            val assets = gemWalletDataSource.getAssets(GemWalletId(wallet.id), chain).getOrNull().orEmpty()
+    private suspend fun getGemAssets(
+        wallet: WalletEntity,
+        currency: WalletCurrency,
+        refresh: Boolean,
+        refreshChains: Set<GemChain>? = null,
+    ): List<AssetsEntity> = gemAssetsCacheLock.withLock {
+        val accountChains = wallet.accounts.mapNotNull { account ->
+            GemChain.entries.firstOrNull { it.key == account.chain }
+        }.toSet()
+        val cacheKey = "${wallet.id}:${currency.code}:${currency.chain.symbol}:${currency.address}:${currency.decimals}"
+        val cached = gemAssetsCache[cacheKey].orEmpty().toMutableMap()
+        val chains = when {
+            refreshChains != null -> accountChains.intersect(refreshChains) + accountChains.filterNot(cached::containsKey)
+            refresh -> accountChains
+            else -> accountChains.filterNot(cached::containsKey)
+        }
+        for (chain in chains) {
+            val account = wallet.accounts.first { it.chain == chain.key }
+            val assets = gemWalletDataSource.getAssets(GemWalletId(wallet.id), chain).getOrNull()
+            if (assets == null) {
+                continue
+            }
             val portfolio = gemWalletDataSource.getPortfolio(GemWalletId(wallet.id), chain)
                 .getOrNull()
                 ?.assets
                 ?.associateBy { it.asset.id.value }
                 .orEmpty()
-            assets.map { asset ->
+            cached[chain] = assets.map { asset ->
                 val known = asset.asset.metadata as? GemAssetMetadata.Known
                 val token = TokenEntity(
                     blockchain = Blockchain.GEM,
@@ -214,7 +239,7 @@ class AssetsManager(
                     value = Coins.of(asset.balance.amount.orEmpty(), token.decimals),
                     walletAddress = account.address,
                 )
-                val fiat = if (settingsRepository.currency.code == "USD") {
+                val fiat = if (currency.code == "USD") {
                     Coins.of(portfolio[asset.asset.id.value]?.balance?.amount.orEmpty(), 2)
                 } else {
                     Coins.ZERO
@@ -223,7 +248,7 @@ class AssetsManager(
                     AccountTokenEntity.create(
                         balance = balance,
                         fiatRate = TokenRateEntity(
-                            currency = settingsRepository.currency,
+                            currency = currency,
                             fiat = fiat,
                             rate = Coins.ZERO,
                             rateDiff24h = "",
@@ -232,7 +257,8 @@ class AssetsManager(
                 )
             }
         }
-        return result
+        gemAssetsCache[cacheKey] = cached
+        return accountChains.flatMap { cached[it].orEmpty() }
     }
 
     private fun nativeDecimals(chain: GemChain): Int = when (chain) {
