@@ -6,12 +6,11 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.Interceptor
+import okhttp3.HttpUrl
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.internal.http.promisesBody
-import okio.Buffer
-import java.io.PrintWriter
-import java.io.StringWriter
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
 class LoggingInterceptor(
@@ -46,28 +45,21 @@ class LoggingInterceptor(
     private fun interceptWithDetailedLog(requestId: Int, request: Request, chain: Interceptor.Chain): Response {
         val requestLog = mutableListOf<String>()
         requestLog.add("----> [$requestId] =============== Request ===============")
-        requestLog.add("${request.method} ${request.url}")
+        requestLog.add("${request.method} ${redactUrl(request.url)}")
 
         if (request.headers.size > 0) {
             request.headers.forEach { (header, values) ->
-                if (header == "Authorization") {
-                    requestLog.add("Authorization: <hidden>")
+                if (isSensitiveHeader(header)) {
+                    requestLog.add("$header: <hidden>")
                 } else {
                     requestLog.add("$header: $values")
                 }
             }
         }
 
-        when (val requestBody = request.body) {
+        when (request.body) {
             null -> requestLog.add("<empty>")
-            else -> {
-                requestLog.add("")
-                requestLog.add("Request body:")
-
-                val buffer = Buffer()
-                requestBody.writeTo(buffer)
-                requestLog.add(buffer.readUtf8())
-            }
+            else -> requestLog.add("Request body: <hidden>")
         }
 
         requestLog.add("----> [$requestId] End of request")
@@ -81,15 +73,17 @@ class LoggingInterceptor(
 
             val responseLog = mutableListOf<String>()
             responseLog.add("<---- [$requestId] =============== Response ===============")
-            responseLog.add("${response.code} ${response.message} ${request.url} (${duration}ms)")
+            responseLog.add("${response.code} ${response.message} ${redactUrl(request.url)} (${duration}ms)")
 
             if (response.headers.size > 0) {
                 response.headers.forEach { (header, values) ->
-                    responseLog.add("$header: $values")
+                    if (isSensitiveHeader(header)) {
+                        responseLog.add("$header: <hidden>")
+                    } else {
+                        responseLog.add("$header: $values")
+                    }
                 }
             }
-
-            val responseBody = response.body
 
             responseLog.add("")
             responseLog.add("Response body:")
@@ -99,15 +93,12 @@ class LoggingInterceptor(
                 response.header("content-type")?.substringBefore(';'),
                 ignoreCase = true
             )
-            if (response.promisesBody() && !isGzip && !isStreaming) {
-                val source = responseBody.source()
-                source.request(Long.MAX_VALUE) // Buffer the entire body.
-                val buffer = source.buffer
-
-                val response = buffer.clone().readString(Charsets.UTF_8)
-                responseLog.add(response)
-            } else if (isStreaming) {
+            if (isStreaming) {
                 responseLog.add("<streaming: text/event-stream>")
+            } else if (response.promisesBody() && isGzip) {
+                responseLog.add("<compressed body>")
+            } else if (response.promisesBody()) {
+                responseLog.add("<body hidden>")
             } else {
                 responseLog.add("<empty>")
             }
@@ -125,8 +116,9 @@ class LoggingInterceptor(
     private fun logError(requestId: Int, request: Request, th: Throwable) {
         val responseLog = mutableListOf<String>().apply {
             add("<---- [$requestId] Response")
-            add(request.url.toString())
-            addAll(th.getStackTraceString().lines())
+            add(redactUrl(request.url))
+            add("${th::class.java.name}: network request failed")
+            addAll(th.stackTrace.map { "\tat $it" })
             add("<---- [$requestId] End of Response")
         }
         netErr(responseLog)
@@ -140,20 +132,6 @@ class LoggingInterceptor(
     private fun netErr(lines: List<String>) {
         val log = lines.joinToString("\n")
         if (log.isNotBlank()) L.e("NetLog", "${prefix.get()} ${log.trimEnd()}")
-    }
-
-    private fun Throwable?.getStackTraceString(): String {
-        if (this == null) return ""
-        val sw = StringWriter()
-        val pw = PrintWriter(sw)
-        try {
-            this.printStackTrace(pw)
-            pw.flush()
-            return sw.toString()
-        } finally {
-            pw.close()
-            sw.close()
-        }
     }
 
     private class LoggingPrefixer {
@@ -173,4 +151,32 @@ class LoggingInterceptor(
             }
         }
     }
+}
+
+internal fun redactUrl(url: HttpUrl): String {
+    val builder = url.newBuilder()
+        .username("")
+        .password("")
+        .fragment(null)
+
+    url.queryParameterNames.forEach { name ->
+        val values = url.queryParameterValues(name)
+        builder.removeAllQueryParameters(name)
+        values.forEach { builder.addQueryParameter(name, "<redacted>") }
+    }
+
+    return builder.build().toString()
+}
+
+internal fun isSensitiveHeader(header: String): Boolean {
+    val normalized = header.lowercase(Locale.US)
+    val compact = normalized.replace("-", "").replace("_", "")
+    return compact in setOf(
+        "authorization",
+        "proxyauthorization",
+        "cookie",
+        "setcookie",
+        "xauthorization",
+        "xtonconnectauth",
+    ) || compact.contains("apikey") || compact.contains("token") || compact.contains("secret")
 }
