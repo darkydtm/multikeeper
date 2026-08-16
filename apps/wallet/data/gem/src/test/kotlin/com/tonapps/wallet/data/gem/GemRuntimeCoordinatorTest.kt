@@ -111,6 +111,40 @@ class GemRuntimeCoordinatorTest {
 	}
 
 	@Test
+	fun `coalesces only the initial snapshot and preserves live invalidations`() = runBlocking {
+		val coordinator = coordinator()
+		val first = GemRefreshEvent.Balances(WalletId("wallet"), setOf(Chain.Ethereum))
+		coordinator.processEvent(
+			GemWebSocketEvent.Balances(
+				listOf(GemBalanceInvalidation("wallet", "ethereum_native")),
+			),
+		)
+
+		val deliveries = async(start = CoroutineStart.UNDISPATCHED) {
+			coordinator.refreshEventsForConsumer().take(3).toList()
+		}
+		coordinator.processEvent(
+			GemWebSocketEvent.Balances(
+				listOf(GemBalanceInvalidation("wallet", "ethereum_native")),
+			),
+		)
+		coordinator.processEvent(
+			GemWebSocketEvent.Balances(
+				listOf(GemBalanceInvalidation("wallet", "ethereum_native")),
+			),
+		)
+
+		assertEquals(
+			listOf(
+				GemRefreshDelivery.Initial(listOf(first)),
+				GemRefreshDelivery.Live(first),
+				GemRefreshDelivery.Live(first),
+			),
+			deliveries.await(),
+		)
+	}
+
+	@Test
 	fun `bounds replay to the latest refresh events`() = runBlocking {
 		val coordinator = coordinator()
 		repeat(65) { index ->
