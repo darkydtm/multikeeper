@@ -331,7 +331,7 @@ class API(
             TonNetwork.MAINNET -> config.tonapiSSEEndpoint
             TonNetwork.TETRA -> config.tonapiSSEEndpoint
         }
-        val url = "$endpoint/sse/traces?account=$accountId&token=${config.tonApiV2Key}"
+        val url = "$endpoint/sse/traces?account=$accountId"
         return sseHttpClient.sse(url, onFailure = onFailure)
     }
 
