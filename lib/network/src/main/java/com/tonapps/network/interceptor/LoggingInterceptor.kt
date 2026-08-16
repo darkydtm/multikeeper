@@ -14,7 +14,11 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
 class LoggingInterceptor(
-    private val delegate: Delegate
+	private val delegate: Delegate,
+	private val logger: (Boolean, String) -> Unit = { isError, message ->
+		if (isError) L.e("NetLog", message) else L.d("NetLog", message)
+	},
+	private val now: () -> Long = { SystemClock.elapsedRealtime() },
 ) : Interceptor {
 
     interface Delegate {
@@ -66,9 +70,9 @@ class LoggingInterceptor(
         netLog(requestLog)
 
         try {
-            val timeStartMs = SystemClock.elapsedRealtime()
-            val response = chain.proceed(request)
-            val timeEndMs = SystemClock.elapsedRealtime()
+			val timeStartMs = now()
+			val response = chain.proceed(request)
+			val timeEndMs = now()
             val duration = timeEndMs - timeStartMs
 
             val responseLog = mutableListOf<String>()
@@ -117,15 +121,15 @@ class LoggingInterceptor(
         netErr(formatNetworkError(requestId, request.url, th))
     }
 
-    private fun netLog(lines: List<String>) {
-        val log = lines.joinToString("\n")
-        if (log.isNotBlank()) L.d("NetLog", "${prefix.get()} ${log.trimEnd()}")
-    }
+	private fun netLog(lines: List<String>) {
+		val log = lines.joinToString("\n")
+		if (log.isNotBlank()) logger(false, "${prefix.get()} ${log.trimEnd()}")
+	}
 
-    private fun netErr(lines: List<String>) {
-        val log = lines.joinToString("\n")
-        if (log.isNotBlank()) L.e("NetLog", "${prefix.get()} ${log.trimEnd()}")
-    }
+	private fun netErr(lines: List<String>) {
+		val log = lines.joinToString("\n")
+		if (log.isNotBlank()) logger(true, "${prefix.get()} ${log.trimEnd()}")
+	}
 
     private class LoggingPrefixer {
 
