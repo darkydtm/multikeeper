@@ -6,11 +6,15 @@ import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -33,13 +37,28 @@ class GemRuntimeCoordinator(
 ) {
 	private val _state = MutableStateFlow<GemRuntimeState>(GemRuntimeState.Idle)
 	private val _events = MutableSharedFlow<GemWebSocketEvent>(extraBufferCapacity = 64)
-	private val _refreshEvents = MutableSharedFlow<GemRefreshEvent>(replay = 64, extraBufferCapacity = 64)
+	private val _refreshEvents = MutableSharedFlow<SequencedRefreshEvent>(replay = 64, extraBufferCapacity = 64)
 	private val refreshLock = Mutex()
+	private val refreshEventLock = Mutex()
+	private var refreshSequence = 0L
 	private var started = false
 
 	val state: StateFlow<GemRuntimeState> = _state.asStateFlow()
 	val events: SharedFlow<GemWebSocketEvent> = _events.asSharedFlow()
-	val refreshEvents: SharedFlow<GemRefreshEvent> = _refreshEvents.asSharedFlow()
+	val refreshEvents: Flow<GemRefreshEvent> = _refreshEvents.asSharedFlow().map { it.event }
+
+	fun refreshEventsForConsumer(): Flow<GemRefreshDelivery> {
+		val initial = _refreshEvents.replayCache
+		val sequence = initial.lastOrNull()?.sequence ?: 0L
+		return flow {
+			if (initial.isNotEmpty()) {
+				emit(GemRefreshDelivery.Initial(initial.map { it.event }))
+			}
+			_refreshEvents
+				.filter { it.sequence > sequence }
+				.collect { emit(GemRefreshDelivery.Live(it.event)) }
+		}
+	}
 
 	suspend fun persistWallet(wallet: GemWallet) = refreshLock.withLock {
 		walletRegistry.persist(wallet)
@@ -148,18 +167,22 @@ class GemRuntimeCoordinator(
 						}
 					}.toSet()
 					if (chains.isNotEmpty()) {
-						_refreshEvents.emit(GemRefreshEvent.Balances(walletId, chains))
+						emitRefreshEvent(GemRefreshEvent.Balances(walletId, chains))
 					}
 				}
 			is GemWebSocketEvent.Transactions -> {
 				if (event.transactionIds.isNotEmpty()) {
-					_refreshEvents.emit(
+					emitRefreshEvent(
 						GemRefreshEvent.Transactions(WalletId(event.walletId), event.transactionIds.toSet()),
 					)
 				}
 			}
 		}
 		refreshError?.let { throw it }
+	}
+
+	private suspend fun emitRefreshEvent(event: GemRefreshEvent) = refreshEventLock.withLock {
+		_refreshEvents.emit(SequencedRefreshEvent(++refreshSequence, event))
 	}
 }
 
@@ -171,6 +194,16 @@ sealed interface GemRefreshEvent {
 	data class Balances(val walletId: WalletId, val chains: Set<Chain>) : GemRefreshEvent
 	data class Transactions(val walletId: WalletId, val transactionIds: Set<String>) : GemRefreshEvent
 }
+
+sealed interface GemRefreshDelivery {
+	data class Initial(val events: List<GemRefreshEvent>) : GemRefreshDelivery
+	data class Live(val event: GemRefreshEvent) : GemRefreshDelivery
+}
+
+private data class SequencedRefreshEvent(
+	val sequence: Long,
+	val event: GemRefreshEvent,
+)
 
 data class GemRuntimeCache(
 	val transactions: Map<String, GemTransaction> = emptyMap(),

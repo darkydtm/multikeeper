@@ -216,27 +216,30 @@ class AssetsManager(
 			currency = currency,
 		)
 		val cached = gemAssetsCache[cacheKey].orEmpty().toMutableMap()
-        val chains = when {
-            refreshChains != null -> accountChains.intersect(refreshChains) + accountChains.filterNot(cached::containsKey)
-            refresh -> accountChains
-            else -> accountChains.filterNot(cached::containsKey)
-        }
-        val refreshedChains = mutableSetOf<GemChain>()
-        for (chain in chains) {
+		val chains = when {
+			refreshChains != null -> accountChains.intersect(refreshChains) + accountChains.filterNot(cached::containsKey)
+			refresh -> accountChains
+			else -> accountChains.filterNot(cached::containsKey)
+		}
+		val refreshedChains = mutableSetOf<GemChain>()
+		var incomplete = false
+		for (chain in chains) {
 			val account = wallet.accounts.first { it.chain == chain.key }
 			val assets = gemWalletDataSource.getAssets(GemWalletId(wallet.id), chain).getOrNull()
-            if (assets == null) {
-                if (cached.remove(chain) != null) {
-                    gemAssetsCache[cacheKey] = cached.toMap()
-                }
-                continue
-            }
-            refreshedChains += chain
-            val portfolio = gemWalletDataSource.getPortfolio(GemWalletId(wallet.id), chain)
-                .getOrNull()
-                ?.assets
-                ?.associateBy { it.asset.id.value }
-                .orEmpty()
+			if (assets == null) {
+				incomplete = true
+				continue
+			}
+			val portfolio = gemWalletDataSource.getPortfolio(GemWalletId(wallet.id), chain)
+				.getOrNull()
+				?.assets
+				?.associateBy { it.asset.id.value }
+				?: run {
+					incomplete = true
+					null
+				}
+			if (portfolio == null) continue
+			refreshedChains += chain
 			cached[chain] = assets.map { asset ->
                 val known = asset.asset.metadata as? GemAssetMetadata.Known
                 val token = TokenEntity(
@@ -273,12 +276,12 @@ class AssetsManager(
                     ),
                 )
             }
-        }
-        gemAssetsCache[cacheKey] = cached
-        return AssetsResult(
-            assets = accountChains.flatMap { cached[it].orEmpty() },
-            refreshedGemChains = refreshedChains,
-        )
+		}
+		gemAssetsCache[cacheKey] = cached
+		return AssetsResult(
+			assets = if (incomplete) null else accountChains.flatMap { cached[it].orEmpty() },
+			refreshedGemChains = refreshedChains,
+		)
     }
 
     private fun nativeDecimals(chain: GemChain): Int = when (chain) {

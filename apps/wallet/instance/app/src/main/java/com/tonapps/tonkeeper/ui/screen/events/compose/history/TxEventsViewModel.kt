@@ -35,6 +35,7 @@ import com.tonapps.wallet.data.passcode.PasscodeManager
 import com.tonapps.wallet.data.settings.SettingsRepository
 import com.tonapps.wallet.data.gem.GemWalletDataSource
 import com.tonapps.wallet.data.gem.GemRuntimeCoordinator
+import com.tonapps.wallet.data.gem.GemRefreshDelivery
 import com.tonapps.wallet.data.gem.GemRefreshEvent
 import com.tonapps.tonkeeper.ui.screen.events.compose.history.paging.GemHistoryMapper
 import com.tonapps.wallet.localization.Localization
@@ -46,6 +47,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import okio.IOException
 import ui.components.events.EventItemClickPart
@@ -146,12 +150,27 @@ class TxEventsViewModel(
 			}
 		}
 
-		gemRuntimeCoordinator.refreshEvents.collectFlow { event ->
-			if (wallet.isGem && event is GemRefreshEvent.Transactions && event.walletId.value == wallet.id) {
-				requestRefresh()
-				selectFilterById()
+		gemRuntimeCoordinator.refreshEventsForConsumer()
+			.onEach { delivery ->
+				when (delivery) {
+					is GemRefreshDelivery.Initial -> {
+						if (delivery.events.filterIsInstance<GemRefreshEvent.Transactions>().any { event ->
+							wallet.isGem && event.walletId.value == wallet.id
+						}) {
+							requestRefresh()
+							selectFilterById()
+						}
+					}
+					is GemRefreshDelivery.Live -> {
+						val event = delivery.event as? GemRefreshEvent.Transactions
+						if (wallet.isGem && event?.walletId?.value == wallet.id) {
+							requestRefresh()
+							selectFilterById()
+						}
+					}
+				}
 			}
-		}
+			.launchIn(viewModelScope)
 
         combine(
             settingsRepository.tokenPrefsChangedFlow.drop(1),

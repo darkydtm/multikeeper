@@ -35,6 +35,7 @@ import com.tonapps.wallet.data.rates.RatesRepository
 import com.tonapps.wallet.data.settings.SettingsRepository
 import com.tonapps.wallet.data.staking.StakingRepository
 import com.tonapps.wallet.data.tx.TransactionManager
+import com.tonapps.wallet.data.gem.GemRefreshDelivery
 import com.tonapps.wallet.data.gem.GemRefreshEvent
 import com.tonapps.wallet.data.gem.GemRuntimeCoordinator
 import com.tonapps.wallet.data.gem.Chain as GemChain
@@ -45,9 +46,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -149,15 +151,33 @@ class WalletViewModel(
 			}
 		}
 
-		gemRuntimeCoordinator.refreshEvents.collectFlow { event ->
-			if (wallet.isGem && event is GemRefreshEvent.Balances && event.walletId.value == wallet.id) {
-				gemRefreshLock.withLock {
-					val generation = ++gemRefreshGeneration
-					event.chains.forEach { chain -> gemRefreshChains[chain] = generation }
+		gemRuntimeCoordinator.refreshEventsForConsumer()
+			.onEach { delivery ->
+				when (delivery) {
+					is GemRefreshDelivery.Initial -> {
+						val events = delivery.events.filterIsInstance<GemRefreshEvent.Balances>()
+							.filter { event -> wallet.isGem && event.walletId.value == wallet.id }
+						if (events.isNotEmpty()) {
+							gemRefreshLock.withLock {
+								val generation = ++gemRefreshGeneration
+								events.flatMap { it.chains }.forEach { chain -> gemRefreshChains[chain] = generation }
+							}
+							refresh()
+						}
+					}
+					is GemRefreshDelivery.Live -> {
+						val event = delivery.event as? GemRefreshEvent.Balances
+						if (wallet.isGem && event?.walletId?.value == wallet.id) {
+							gemRefreshLock.withLock {
+								val generation = ++gemRefreshGeneration
+								event.chains.forEach { chain -> gemRefreshChains[chain] = generation }
+							}
+							refresh()
+						}
+					}
 				}
-				refresh()
 			}
-		}
+			.launchIn(viewModelScope)
 
         collectFlow(networkMonitor.isOnlineFlow) { online ->
             if (!online) {
@@ -494,8 +514,8 @@ class WalletViewModel(
         autoRefreshJob = null
     }
 
-    companion object {
-        private const val CACHE_NAME = "wallet"
+	companion object {
+		private const val CACHE_NAME = "wallet"
 
         private fun getCurrency(
             wallet: WalletEntity,
