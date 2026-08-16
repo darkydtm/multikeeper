@@ -23,6 +23,7 @@ class GemBackendClient(
 	},
 ) : GemSubscriptionBackend, GemDeviceBackend, GemBackendReader, GemDeviceTokenBackend {
 	private val signedClient = httpClient.newBuilder()
+		.followSslRedirects(false)
 		.addInterceptor(GemRequestSignerInterceptor(signer))
 		.build()
 
