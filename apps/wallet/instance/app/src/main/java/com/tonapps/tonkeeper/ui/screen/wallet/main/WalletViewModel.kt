@@ -459,27 +459,20 @@ class WalletViewModel(
         val assets = if (refresh && wallet.isGem) {
 			val chains = gemRefreshLock.withLock { gemRefreshChains.toMap() }
 			if (chains.isEmpty()) {
-				assetsManager.getAssets(wallet, currency, refresh)
+				assetsManager.getAssets(wallet, currency, refresh).assets
 			} else {
-				val refreshedChains = chains.keys.filter { chain ->
-					val chainWallet = wallet.copy(accounts = wallet.accounts.filter { it.chain == chain.key })
-					val probeCurrency = currency.copy(address = "${currency.address}:refresh:${chains[chain]}")
-					assetsManager.getAssets(chainWallet, probeCurrency, refresh, setOf(chain)).orEmpty().isNotEmpty()
-				}.toSet()
-				val assets = assetsManager.getAssets(wallet, currency, refresh, chains.keys)
-				if (!assets.isNullOrEmpty()) {
-					gemRefreshLock.withLock {
-						refreshedChains.forEach { chain ->
-							if (gemRefreshChains[chain] == chains[chain]) {
-								gemRefreshChains.remove(chain)
-							}
+				val result = assetsManager.getAssets(wallet, currency, refresh, chains.keys)
+				gemRefreshLock.withLock {
+					result.refreshedGemChains.forEach { chain ->
+						if (gemRefreshChains[chain] == chains[chain]) {
+							gemRefreshChains.remove(chain)
 						}
 					}
 				}
-				assets
+				result.assets
 			}
 		} else {
-			assetsManager.getAssets(wallet, currency, refresh)
+			assetsManager.getAssets(wallet, currency, refresh).assets
 		}
         assets?.let {
             State.Assets(
