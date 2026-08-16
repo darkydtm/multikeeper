@@ -36,43 +36,72 @@ class GemSubscriptionRepository(
 		val desiredPairs = desiredAccounts
 			.map { it.walletId.value to it.chain.key }
 			.toSet()
-		val current = backend.getSubscriptions().getOrElse { return@withLock Result.failure(it) }.orEmpty()
-		val currentPairs = current
-			.flatMap { subscription -> subscription.chains.map { subscription.walletId to it } }
-			.toSet()
-		val additions = desiredAccounts
-			.filter { (it.walletId.value to it.chain.key) !in currentPairs }
-			.groupBy { it.walletId.value to it.address }
-			.entries
-			.sortedWith(compareBy({ it.key.first }, { it.key.second }))
-			.map { (walletAndAddress, accounts) ->
-				GemWalletSubscription(
-					walletId = walletAndAddress.first,
-					subscriptions = listOf(
-						GemAddressChains(
-							address = walletAndAddress.second,
-							chains = accounts.map { it.chain.key }.distinct().sorted(),
+		var appliedAdditions = emptyList<GemWalletSubscription>()
+		var appliedDeletions = emptyList<GemWalletSubscriptionChains>()
+		var lastError: Throwable? = null
+
+		repeat(MAX_RECONCILIATION_ATTEMPTS) {
+			val currentResult = backend.getSubscriptions()
+			if (currentResult.isFailure) {
+				lastError = currentResult.exceptionOrNull()
+				return@repeat
+			}
+			val current = currentResult.getOrThrow().orEmpty()
+			val currentPairs = current
+				.flatMap { subscription -> subscription.chains.map { subscription.walletId to it } }
+				.toSet()
+			val additions = desiredAccounts
+				.filter { (it.walletId.value to it.chain.key) !in currentPairs }
+				.groupBy { it.walletId.value to it.address }
+				.entries
+				.sortedWith(compareBy({ it.key.first }, { it.key.second }))
+				.map { (walletAndAddress, accounts) ->
+					GemWalletSubscription(
+						walletId = walletAndAddress.first,
+						subscriptions = listOf(
+							GemAddressChains(
+								address = walletAndAddress.second,
+								chains = accounts.map { it.chain.key }.distinct().sorted(),
+							),
 						),
-					),
-				)
-			}
-		val deletions = (currentPairs - desiredPairs)
-			.groupBy { it.first }
-			.toSortedMap()
-			.map { (walletId, pairs) ->
-				GemWalletSubscriptionChains(
-					walletId = walletId,
-					chains = pairs.map { it.second }.sorted(),
-				)
-			}
+					)
+				}
+			val deletions = (currentPairs - desiredPairs)
+				.groupBy { it.first }
+				.toSortedMap()
+				.map { (walletId, pairs) ->
+					GemWalletSubscriptionChains(
+						walletId = walletId,
+						chains = pairs.map { it.second }.sorted(),
+					)
+				}
 
-		if (additions.isNotEmpty()) {
-			backend.addSubscriptions(additions).getOrElse { return@withLock Result.failure(it) }
-		}
-		if (deletions.isNotEmpty()) {
-			backend.deleteSubscriptions(deletions).getOrElse { return@withLock Result.failure(it) }
+			if (additions.isEmpty() && deletions.isEmpty()) {
+				return@withLock Result.success(GemSubscriptionSyncResult(appliedAdditions, appliedDeletions))
+			}
+			if (additions.isNotEmpty()) {
+				val addResult = backend.addSubscriptions(additions)
+				if (addResult.isFailure) {
+					lastError = addResult.exceptionOrNull()
+					return@repeat
+				}
+				appliedAdditions += additions
+			}
+			if (deletions.isNotEmpty()) {
+				val deleteResult = backend.deleteSubscriptions(deletions)
+				if (deleteResult.isFailure) {
+					lastError = deleteResult.exceptionOrNull()
+					return@repeat
+				}
+				appliedDeletions += deletions
+			}
+			return@withLock Result.success(GemSubscriptionSyncResult(appliedAdditions, appliedDeletions))
 		}
 
-		Result.success(GemSubscriptionSyncResult(additions, deletions))
+		Result.failure(lastError ?: IllegalStateException("Gem subscription reconciliation did not converge"))
+	}
+
+	private companion object {
+		const val MAX_RECONCILIATION_ATTEMPTS = 3
 	}
 }
