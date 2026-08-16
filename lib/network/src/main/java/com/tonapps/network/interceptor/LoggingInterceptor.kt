@@ -114,14 +114,7 @@ class LoggingInterceptor(
     }
 
     private fun logError(requestId: Int, request: Request, th: Throwable) {
-        val responseLog = mutableListOf<String>().apply {
-            add("<---- [$requestId] Response")
-            add(redactUrl(request.url))
-            add("${th::class.java.name}: network request failed")
-            addAll(th.stackTrace.map { "\tat $it" })
-            add("<---- [$requestId] End of Response")
-        }
-        netErr(responseLog)
+        netErr(formatNetworkError(requestId, request.url, th))
     }
 
     private fun netLog(lines: List<String>) {
@@ -171,12 +164,32 @@ internal fun redactUrl(url: HttpUrl): String {
 internal fun isSensitiveHeader(header: String): Boolean {
     val normalized = header.lowercase(Locale.US)
     val compact = normalized.replace("-", "").replace("_", "")
-    return compact in setOf(
+    return listOf(
+        "auth",
         "authorization",
+        "authentication",
         "proxyauthorization",
         "cookie",
         "setcookie",
+        "credential",
+        "password",
+        "passcode",
+        "mnemonic",
+        "privatekey",
+        "session",
         "xauthorization",
         "xtonconnectauth",
-    ) || compact.contains("apikey") || compact.contains("token") || compact.contains("secret")
+        "apikey",
+        "token",
+        "secret",
+    ).any(compact::contains)
 }
+
+internal fun formatNetworkError(requestId: Int, url: HttpUrl, throwable: Throwable): List<String> =
+    buildList {
+        add("<---- [$requestId] Response")
+        add(redactUrl(url))
+        add("${throwable::class.java.name}: network request failed")
+        addAll(throwable.stackTrace.map { "\tat $it" })
+        add("<---- [$requestId] End of Response")
+    }
