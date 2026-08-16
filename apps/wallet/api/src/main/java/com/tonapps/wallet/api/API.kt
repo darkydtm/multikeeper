@@ -729,7 +729,7 @@ class API(
         }
         val value = publicKeys.joinToString(",")
         val url = "${bridgeUrl}/events?client_id=$value"
-        return defaultHttpClient.sse(url, lastEventId, onFailure).filter { it.type == "message" }
+        return tonConnectBridgeHttpClient.sse(url, lastEventId, onFailure).filter { it.type == "message" }
     }
 
     fun tonconnectPayload(): String? {
@@ -775,7 +775,7 @@ class API(
         val mimeType = "text/plain".toMediaType()
         val url = "${bridgeUrl}/message?client_id=$publicKeyHex&to=$clientId&ttl=300"
         withRetry {
-            defaultHttpClient.post(url, body.toRequestBody(mimeType))
+            tonConnectBridgeHttpClient.post(url, body.toRequestBody(mimeType))
         }
     }
 
