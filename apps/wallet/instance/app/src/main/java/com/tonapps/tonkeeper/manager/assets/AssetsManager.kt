@@ -4,6 +4,7 @@ import android.content.Context
 import com.tonapps.blockchain.model.legacy.TokenEntity
 import com.tonapps.blockchain.model.legacy.WalletCurrency
 import com.tonapps.blockchain.model.legacy.WalletEntity
+import com.tonapps.blockchain.model.legacy.WalletAccount
 import com.tonapps.blockchain.model.legacy.BalanceEntity
 import com.tonapps.blockchain.contract.Blockchain
 import com.tonapps.blockchain.model.legacy.TokenEntity.Verification
@@ -50,14 +51,16 @@ class AssetsManager(
 ) : EmulationUseCase.Delegate {
 
     private val cache = TotalBalanceCache(context)
-    private val gemAssetsCache = ConcurrentHashMap<String, Map<GemChain, List<AssetsEntity>>>()
+	private val gemAssetsCache = ConcurrentHashMap<GemAssetsCacheKey, Map<GemChain, List<AssetsEntity>>>()
     private val gemAssetsCacheLock = Mutex()
 
     init {
         settingsRepository.tokenPrefsChangedFlow.drop(1).onEach {
             accountRepository.getSelectedWallet()?.let {
                 cache.clear(it, settingsRepository.currency)
-                gemAssetsCache.keys.removeIf { key -> key.startsWith("${it.id}:") }
+				gemAssetsCacheLock.withLock {
+					gemAssetsCache.keys.removeIf { key -> key.walletId == it.id }
+				}
             }
         }.launchIn(scope)
     }
@@ -202,17 +205,24 @@ class AssetsManager(
         val accountChains = wallet.accounts.mapNotNull { account ->
             GemChain.entries.firstOrNull { it.key == account.chain }
         }.toSet()
-        val cacheKey = "${wallet.id}:${currency.code}:${currency.chain.symbol}:${currency.address}:${currency.decimals}"
-        val cached = gemAssetsCache[cacheKey].orEmpty().toMutableMap()
+		val cacheKey = GemAssetsCacheKey(
+			walletId = wallet.id,
+			accounts = wallet.accounts,
+			currency = currency,
+		)
+		val cached = gemAssetsCache[cacheKey].orEmpty().toMutableMap()
         val chains = when {
             refreshChains != null -> accountChains.intersect(refreshChains) + accountChains.filterNot(cached::containsKey)
             refresh -> accountChains
             else -> accountChains.filterNot(cached::containsKey)
         }
         for (chain in chains) {
-            val account = wallet.accounts.first { it.chain == chain.key }
-            val assets = gemWalletDataSource.getAssets(GemWalletId(wallet.id), chain).getOrNull()
+			val account = wallet.accounts.first { it.chain == chain.key }
+			val assets = gemWalletDataSource.getAssets(GemWalletId(wallet.id), chain).getOrNull()
             if (assets == null) {
+                if (cached.remove(chain) != null) {
+                    gemAssetsCache[cacheKey] = cached.toMap()
+                }
                 continue
             }
             val portfolio = gemWalletDataSource.getPortfolio(GemWalletId(wallet.id), chain)
@@ -220,7 +230,7 @@ class AssetsManager(
                 ?.assets
                 ?.associateBy { it.asset.id.value }
                 .orEmpty()
-            cached[chain] = assets.map { asset ->
+			cached[chain] = assets.map { asset ->
                 val known = asset.asset.metadata as? GemAssetMetadata.Known
                 val token = TokenEntity(
                     blockchain = Blockchain.GEM,
@@ -254,12 +264,12 @@ class AssetsManager(
                             rateDiff24h = "",
                         ),
                     ),
-                )
-            }
-        }
-        gemAssetsCache[cacheKey] = cached
-        return accountChains.flatMap { cached[it].orEmpty() }
-    }
+				)
+			}
+			gemAssetsCache[cacheKey] = cached.toMap()
+		}
+		return accountChains.flatMap { gemAssetsCache[cacheKey]?.get(it).orEmpty() }
+	}
 
     private fun nativeDecimals(chain: GemChain): Int = when (chain) {
         GemChain.Bitcoin -> 8
@@ -317,3 +327,9 @@ class AssetsManager(
         return getTotalBalance(wallet, currency, false)
     }
 }
+
+private data class GemAssetsCacheKey(
+	val walletId: String,
+	val accounts: List<WalletAccount>,
+	val currency: WalletCurrency,
+)
