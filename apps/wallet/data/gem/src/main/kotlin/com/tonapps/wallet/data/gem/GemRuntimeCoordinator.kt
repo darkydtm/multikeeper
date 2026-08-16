@@ -4,7 +4,6 @@ import java.io.IOException
 import java.util.LinkedHashMap
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -12,7 +11,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -35,33 +33,13 @@ class GemRuntimeCoordinator(
 ) {
 	private val _state = MutableStateFlow<GemRuntimeState>(GemRuntimeState.Idle)
 	private val _events = MutableSharedFlow<GemWebSocketEvent>(extraBufferCapacity = 64)
-	private val _refreshState = MutableStateFlow(GemRefreshState())
+	private val _refreshEvents = MutableSharedFlow<GemRefreshEvent>(replay = 64, extraBufferCapacity = 64)
 	private val refreshLock = Mutex()
 	private var started = false
 
 	val state: StateFlow<GemRuntimeState> = _state.asStateFlow()
 	val events: SharedFlow<GemWebSocketEvent> = _events.asSharedFlow()
-	val refreshEvents: Flow<GemRefreshEvent> = flow {
-		var previous = emptyMap<WalletId, GemWalletRefreshState>()
-		_refreshState.collect { current ->
-			current.wallets.forEach { (walletId, refresh) ->
-				val old = previous[walletId]
-				val chains = if (old == null) refresh.chains else refresh.chains - old.chains
-				if (chains.isNotEmpty()) {
-					emit(GemRefreshEvent.Balances(walletId, chains))
-				}
-				val transactionIds = if (old == null) {
-					refresh.transactionIds
-				} else {
-					refresh.transactionIds - old.transactionIds
-				}
-				if (transactionIds.isNotEmpty()) {
-					emit(GemRefreshEvent.Transactions(walletId, transactionIds))
-				}
-			}
-			previous = current.wallets
-		}
-	}
+	val refreshEvents: SharedFlow<GemRefreshEvent> = _refreshEvents.asSharedFlow()
 
 	suspend fun persistWallet(wallet: GemWallet) = refreshLock.withLock {
 		walletRegistry.persist(wallet)
@@ -170,44 +148,18 @@ class GemRuntimeCoordinator(
 						}
 					}.toSet()
 					if (chains.isNotEmpty()) {
-						updateRefreshState(GemRefreshEvent.Balances(walletId, chains))
+						_refreshEvents.emit(GemRefreshEvent.Balances(walletId, chains))
 					}
 				}
 			is GemWebSocketEvent.Transactions -> {
 				if (event.transactionIds.isNotEmpty()) {
-					updateRefreshState(
+					_refreshEvents.emit(
 						GemRefreshEvent.Transactions(WalletId(event.walletId), event.transactionIds.toSet()),
 					)
 				}
 			}
 		}
 		refreshError?.let { throw it }
-	}
-
-	private fun updateRefreshState(event: GemRefreshEvent) {
-		_refreshState.update { state ->
-			val current = state.wallets[event.walletId] ?: GemWalletRefreshState()
-			val updated = when (event) {
-				is GemRefreshEvent.Balances -> current.copy(chains = current.chains + event.chains)
-				is GemRefreshEvent.Transactions -> current.copy(
-					transactionIds = (current.transactionIds + event.transactionIds)
-						.takeLast(MAX_TRANSACTION_IDS_PER_WALLET)
-						.toSet(),
-				)
-			}
-			val wallets = LinkedHashMap<WalletId, GemWalletRefreshState>(state.wallets)
-			wallets.remove(event.walletId)
-			wallets[event.walletId] = updated
-			while (wallets.size > MAX_WALLET_STATES) {
-				wallets.remove(wallets.keys.first())
-			}
-			state.copy(wallets = wallets)
-		}
-	}
-
-	private companion object {
-		const val MAX_WALLET_STATES = 64
-		const val MAX_TRANSACTION_IDS_PER_WALLET = 64
 	}
 }
 
@@ -219,15 +171,6 @@ sealed interface GemRefreshEvent {
 	data class Balances(val walletId: WalletId, val chains: Set<Chain>) : GemRefreshEvent
 	data class Transactions(val walletId: WalletId, val transactionIds: Set<String>) : GemRefreshEvent
 }
-
-private data class GemRefreshState(
-	val wallets: Map<WalletId, GemWalletRefreshState> = emptyMap(),
-)
-
-private data class GemWalletRefreshState(
-	val chains: Set<Chain> = emptySet(),
-	val transactionIds: Set<String> = emptySet(),
-)
 
 data class GemRuntimeCache(
 	val transactions: Map<String, GemTransaction> = emptyMap(),
