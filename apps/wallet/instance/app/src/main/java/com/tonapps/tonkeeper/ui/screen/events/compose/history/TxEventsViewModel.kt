@@ -44,8 +44,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.launch
 import okio.IOException
 import ui.components.events.EventItemClickPart
@@ -146,12 +148,16 @@ class TxEventsViewModel(
 			}
 		}
 
-		gemRuntimeCoordinator.refreshEvents.collectFlow { event ->
-			if (wallet.isGem && event is GemRefreshEvent.Transactions && event.walletId.value == wallet.id) {
+		gemRuntimeCoordinator.refreshEvents
+			.filterIsInstance<GemRefreshEvent.Transactions>()
+			.filter { event ->
+				wallet.isGem && event.walletId.value == wallet.id
+			}
+			.debounce(GEM_REFRESH_DEBOUNCE_MS)
+			.collectFlow {
 				requestRefresh()
 				selectFilterById()
 			}
-		}
 
         combine(
             settingsRepository.tokenPrefsChangedFlow.drop(1),
@@ -293,6 +299,7 @@ class TxEventsViewModel(
 	)
 
     private companion object {
+        private const val GEM_REFRESH_DEBOUNCE_MS = 100L
         private val monthYearFormatter = SimpleDateFormat("MMMM_yyyy", Locale.US)
         private val dayMonthFormatter = SimpleDateFormat("d_MMMM", Locale.US)
     }

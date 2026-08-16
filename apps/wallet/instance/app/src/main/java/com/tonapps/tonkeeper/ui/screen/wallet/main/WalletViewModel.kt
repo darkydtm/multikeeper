@@ -44,10 +44,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -149,15 +150,19 @@ class WalletViewModel(
 			}
 		}
 
-		gemRuntimeCoordinator.refreshEvents.collectFlow { event ->
-			if (wallet.isGem && event is GemRefreshEvent.Balances && event.walletId.value == wallet.id) {
+		gemRuntimeCoordinator.refreshEvents
+			.filterIsInstance<GemRefreshEvent.Balances>()
+			.filter { event ->
+				wallet.isGem && event.walletId.value == wallet.id
+			}
+			.onEach { event ->
 				gemRefreshLock.withLock {
 					val generation = ++gemRefreshGeneration
 					event.chains.forEach { chain -> gemRefreshChains[chain] = generation }
 				}
-				refresh()
 			}
-		}
+			.debounce(GEM_REFRESH_DEBOUNCE_MS)
+			.collectFlow { refresh() }
 
         collectFlow(networkMonitor.isOnlineFlow) { online ->
             if (!online) {
@@ -495,7 +500,8 @@ class WalletViewModel(
     }
 
     companion object {
-        private const val CACHE_NAME = "wallet"
+		private const val CACHE_NAME = "wallet"
+		private const val GEM_REFRESH_DEBOUNCE_MS = 100L
 
         private fun getCurrency(
             wallet: WalletEntity,
