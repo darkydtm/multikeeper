@@ -50,6 +50,11 @@ class AssetsManager(
     private val gemWalletDataSource: GemWalletDataSource,
 ) : EmulationUseCase.Delegate {
 
+    data class AssetsResult(
+        val assets: List<AssetsEntity>?,
+        val refreshedGemChains: Set<GemChain> = emptySet(),
+    )
+
     private val cache = TotalBalanceCache(context)
 	private val gemAssetsCache = ConcurrentHashMap<GemAssetsCacheKey, Map<GemChain, List<AssetsEntity>>>()
     private val gemAssetsCacheLock = Mutex()
@@ -70,7 +75,7 @@ class AssetsManager(
         currency: WalletCurrency = settingsRepository.currency,
         refresh: Boolean,
         gemChains: Set<GemChain>? = null,
-    ): List<AssetsEntity>? {
+    ): AssetsResult {
         if (wallet.isGem) return getGemAssets(wallet, currency, refresh, gemChains)
         val tokens = getTokens(wallet, currency, refresh)
         var staked = getStaked(wallet, tokens.map { it.token }, currency, refresh)
@@ -113,15 +118,15 @@ class AssetsManager(
         }
         val list = (filteredTokens + staked).sortedBy { it.fiat }.reversed()
         if (list.isEmpty()) {
-            return null
+            return AssetsResult(null)
         }
-        return list
+        return AssetsResult(list)
     }
 
     suspend fun getToken(
         wallet: WalletEntity, token: String, currency: WalletCurrency = settingsRepository.currency
     ): AssetsEntity.Token? {
-        if (wallet.isGem) return getGemAssets(wallet, currency, false).filterIsInstance<AssetsEntity.Token>().firstOrNull { it.address == token }
+        if (wallet.isGem) return getGemAssets(wallet, currency, false).assets.orEmpty().filterIsInstance<AssetsEntity.Token>().firstOrNull { it.address == token }
         val tokens = getTokens(wallet, currency, false)
         return tokens.firstOrNull {
             it.token.address.equalsAddress(token)
@@ -133,7 +138,7 @@ class AssetsManager(
         accountIds: List<String>,
         currency: WalletCurrency = settingsRepository.currency
     ): List<AssetsEntity.Token> = withContext(Dispatchers.IO) {
-        if (wallet.isGem) return@withContext getGemAssets(wallet, currency, false).filterIsInstance<AssetsEntity.Token>()
+        if (wallet.isGem) return@withContext getGemAssets(wallet, currency, false).assets.orEmpty().filterIsInstance<AssetsEntity.Token>()
         if (accountIds.isEmpty()) {
             emptyList()
         } else {
@@ -149,7 +154,7 @@ class AssetsManager(
         currency: WalletCurrency = settingsRepository.currency,
         refresh: Boolean,
     ): List<AssetsEntity.Token> {
-        if (wallet.isGem) return getGemAssets(wallet, currency, refresh).filterIsInstance<AssetsEntity.Token>()
+        if (wallet.isGem) return getGemAssets(wallet, currency, refresh).assets.orEmpty().filterIsInstance<AssetsEntity.Token>()
         val safeMode = settingsRepository.isSafeModeEnabled(wallet.network)
         val tronAddress =
             if (wallet.hasPrivateKey && !wallet.testnet) {
@@ -201,7 +206,7 @@ class AssetsManager(
         currency: WalletCurrency,
         refresh: Boolean,
         refreshChains: Set<GemChain>? = null,
-    ): List<AssetsEntity> = gemAssetsCacheLock.withLock {
+    ): AssetsResult = gemAssetsCacheLock.withLock {
         val accountChains = wallet.accounts.mapNotNull { account ->
             GemChain.entries.firstOrNull { it.key == account.chain }
         }.toSet()
@@ -216,6 +221,7 @@ class AssetsManager(
             refresh -> accountChains
             else -> accountChains.filterNot(cached::containsKey)
         }
+        val refreshedChains = mutableSetOf<GemChain>()
         for (chain in chains) {
 			val account = wallet.accounts.first { it.chain == chain.key }
 			val assets = gemWalletDataSource.getAssets(GemWalletId(wallet.id), chain).getOrNull()
@@ -225,6 +231,7 @@ class AssetsManager(
                 }
                 continue
             }
+            refreshedChains += chain
             val portfolio = gemWalletDataSource.getPortfolio(GemWalletId(wallet.id), chain)
                 .getOrNull()
                 ?.assets
@@ -264,12 +271,15 @@ class AssetsManager(
                             rateDiff24h = "",
                         ),
                     ),
-				)
-			}
-			gemAssetsCache[cacheKey] = cached.toMap()
-		}
-		return accountChains.flatMap { gemAssetsCache[cacheKey]?.get(it).orEmpty() }
-	}
+                )
+            }
+        }
+        gemAssetsCache[cacheKey] = cached
+        return AssetsResult(
+            assets = accountChains.flatMap { cached[it].orEmpty() },
+            refreshedGemChains = refreshedChains,
+        )
+    }
 
     private fun nativeDecimals(chain: GemChain): Int = when (chain) {
         GemChain.Bitcoin -> 8
@@ -313,7 +323,7 @@ class AssetsManager(
         refresh: Boolean,
         sorted: Boolean,
     ): Coins? {
-        var assets = getAssets(wallet, currency, refresh) ?: return null
+        var assets = getAssets(wallet, currency, refresh).assets ?: return null
         if (sorted) {
             assets = assets.sort(wallet, settingsRepository)
         }

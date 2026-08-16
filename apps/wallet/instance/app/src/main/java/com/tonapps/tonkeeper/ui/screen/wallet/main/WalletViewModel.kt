@@ -84,8 +84,9 @@ class WalletViewModel(
         get() = settingsRepository.installId
 
     private var autoRefreshJob: Job? = null
-    private val gemRefreshChains = mutableSetOf<GemChain>()
+    private val gemRefreshChains = mutableMapOf<GemChain, Long>()
     private val gemRefreshLock = Mutex()
+    private var gemRefreshGeneration = 0L
     private val alertNotificationsFlow = MutableStateFlow<List<NotificationEntity>>(emptyList())
 
     private val _uiLabelFlow = MutableStateFlow<Wallet.Label?>(null)
@@ -151,7 +152,8 @@ class WalletViewModel(
 		gemRuntimeCoordinator.refreshEvents.collectFlow { event ->
 			if (wallet.isGem && event is GemRefreshEvent.Balances && event.walletId.value == wallet.id) {
 				gemRefreshLock.withLock {
-					gemRefreshChains += event.chains
+					val generation = ++gemRefreshGeneration
+					event.chains.forEach { chain -> gemRefreshChains[chain] = generation }
 				}
 				refresh()
 			}
@@ -455,16 +457,22 @@ class WalletViewModel(
         refresh: Boolean
     ): State.Assets? = withContext(Dispatchers.IO) {
         val assets = if (refresh && wallet.isGem) {
-			gemRefreshLock.withLock {
-				val chains = gemRefreshChains.takeIf { it.isNotEmpty() }?.toSet()
-				val assets = assetsManager.getAssets(wallet, currency, refresh, chains)
-				if (chains != null) {
-					gemRefreshChains.removeAll(chains)
+			val chains = gemRefreshLock.withLock { gemRefreshChains.toMap() }
+			if (chains.isEmpty()) {
+				assetsManager.getAssets(wallet, currency, refresh).assets
+			} else {
+				val result = assetsManager.getAssets(wallet, currency, refresh, chains.keys)
+				gemRefreshLock.withLock {
+					result.refreshedGemChains.forEach { chain ->
+						if (gemRefreshChains[chain] == chains[chain]) {
+							gemRefreshChains.remove(chain)
+						}
+					}
 				}
-				assets
+				result.assets
 			}
 		} else {
-			assetsManager.getAssets(wallet, currency, refresh)
+			assetsManager.getAssets(wallet, currency, refresh).assets
 		}
         assets?.let {
             State.Assets(

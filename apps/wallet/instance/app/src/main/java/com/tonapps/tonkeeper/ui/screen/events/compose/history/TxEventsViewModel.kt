@@ -138,10 +138,12 @@ class TxEventsViewModel(
         }
     }.distinctUntilChanged().cachedIn(viewModelScope)
 
-    init {
-		transactionManager.eventsFlow(wallet).collectFlow { event ->
-			requestRefresh()
-			selectFilterById()
+	init {
+		if (!wallet.isGem) {
+			transactionManager.eventsFlow(wallet).collectFlow { event ->
+				requestRefresh()
+				selectFilterById()
+			}
 		}
 
 		gemRuntimeCoordinator.refreshEvents.collectFlow { event ->
