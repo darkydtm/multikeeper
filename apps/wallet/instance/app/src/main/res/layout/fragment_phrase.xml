@@ -46,17 +46,6 @@
             android:layout_height="wrap_content" />
 
         <Button
-            android:id="@+id/copy"
-            style="@style/Widget.App.Button.Medium.Secondary"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="@dimen/offsetLarge"
-            android:drawableLeft="@drawable/ic_copy_16"
-            android:text="@string/copy_phrase"
-            android:textAppearance="@style/TextAppearance.Label1"
-            android:visibility="gone" />
-
-        <Button
             android:id="@+id/tron"
             style="@style/Widget.App.Button.Medium.Secondary"
             android:layout_width="wrap_content"
