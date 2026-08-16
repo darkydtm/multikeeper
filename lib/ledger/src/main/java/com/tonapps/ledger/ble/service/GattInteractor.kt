@@ -5,7 +5,6 @@ import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattDescriptor
 import com.tonapps.ledger.ble.extension.fromHexStringToBytes
 import com.tonapps.ledger.ble.model.BleDeviceService
-import kotlinx.coroutines.CoroutineScope
 import com.tonapps.log.L
 
 @SuppressLint("MissingPermission")
@@ -23,10 +22,11 @@ class GattInteractor(val gatt: BluetoothGatt) {
     fun enableNotification(deviceService: BleDeviceService) {
         L.d("Enable Notification")
         gatt.setCharacteristicNotification(deviceService.notifyCharacteristic, true)
-        deviceService.notifyCharacteristic.descriptors.forEach {
-            it.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            gatt.writeDescriptor(it)
+        val descriptor = deviceService.notifyCharacteristic.descriptors.first {
+            it.uuid == BluetoothGattDescriptor.UUID_CLIENT_CHARACTERISTIC_CONFIG
         }
+        descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+        gatt.writeDescriptor(descriptor)
     }
 
     fun negotiateMtu() {

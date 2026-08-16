@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothGattService
 import android.content.Context
 import androidx.annotation.VisibleForTesting
 import com.tonapps.async.Async
+import com.tonapps.ledger.ble.extension.fromHexStringToBytes
 import com.tonapps.ledger.ble.extension.toHexString
 import com.tonapps.ledger.ble.extension.toUUID
 import com.tonapps.ledger.ble.model.BleDeviceService
@@ -81,7 +82,7 @@ class BleServiceStateMachine(
             _stateMachineFlow.tryEmit(BleServiceState.Error(BleError.CONNECTION_TIMEOUT))
         }
 
-        pairingCallbackFlow = BlePairingCallbackFlow(context)
+        pairingCallbackFlow = BlePairingCallbackFlow(context, deviceAddress)
         pairingCallbackFlow.bind()
         pairingCallbackFlow.gattFlow
             .onEach { handleGattCallbackEvent(it) }
@@ -165,6 +166,12 @@ class BleServiceStateMachine(
             is GattCallbackEvent.WriteDescriptorAck -> {
                 when (currentState) {
                     BleServiceState.WaitingNotificationEnable -> {
+                        if (!event.isSuccess || event.descriptorUuid != deviceService.notifyCharacteristic.descriptors.first {
+                                it.uuid == android.bluetooth.BluetoothGattDescriptor.UUID_CLIENT_CHARACTERISTIC_CONFIG
+                            }.uuid) {
+                            pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+                            return
+                        }
                         pushState(BleServiceState.CheckingMtu)
                         gattInteractor.askMtu(deviceService)
                     }
@@ -176,14 +183,26 @@ class BleServiceStateMachine(
             is GattCallbackEvent.WriteCharacteristicAck -> {
                 when (currentState) {
                     BleServiceState.CheckingMtu -> {
+                        if (!event.isSuccess || event.characteristicUuid != deviceService.writeCharacteristic.uuid) {
+                            pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+                            return
+                        }
                         L.d("Mtu request Sent")
                     }
                     is BleServiceState.Ready -> {
+                        if (!event.isSuccess || event.characteristicUuid != deviceService.writeCharacteristic.uuid && event.characteristicUuid != deviceService.writeNoAnswerCharacteristic?.uuid) {
+                            pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+                            return
+                        }
                         //NOTHING TO do but not an error
                         //CharacteristicChanged can be called before write characteristic ack
                         bleSender.nextCommand()
                     }
                     is BleServiceState.WaitingResponse -> {
+                        if (!event.isSuccess || event.characteristicUuid != deviceService.writeCharacteristic.uuid && event.characteristicUuid != deviceService.writeNoAnswerCharacteristic?.uuid) {
+                            pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+                            return
+                        }
                         bleSender.nextCommand()
                     }
                     else -> {
@@ -194,23 +213,43 @@ class BleServiceStateMachine(
                 }
             }
             is GattCallbackEvent.CharacteristicChanged -> {
+                if (event.characteristicUuid != deviceService.notifyCharacteristic.uuid) {
+                    pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+                    return
+                }
                 when (currentState) {
                     BleServiceState.CheckingMtu -> {
-                        mtuSize = event.value.toHexString().substring(MTU_HANDSHAKE_COMMAND.length)
-                            .toInt(16)
+                        if (event.value.size < MTU_HANDSHAKE_COMMAND.length / 2 ||
+                            !event.value.copyOfRange(0, MTU_HANDSHAKE_COMMAND.length / 2)
+                                .contentEquals(MTU_HANDSHAKE_COMMAND.fromHexStringToBytes())) {
+                            pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+                            return
+                        }
+                        val mtuValue = event.value.toHexString().substring(MTU_HANDSHAKE_COMMAND.length)
+                        if (mtuValue.isEmpty() || mtuValue.length > 4) {
+                            pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+                            return
+                        }
+                        mtuSize = mtuValue.toInt(16)
                         L.d("Mtu Value received : $mtuSize")
                         L.d("Negotiated Mtu Value received : $negotiatedMtu")
                         if (mtuSize != negotiatedMtu) {
-                            L.e(ERROR_MTU_NEGOTIATED_AND_CHECKED_DIVERGENT)
+                            pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+                            return
                         }
 
                         pushState(BleServiceState.Ready(deviceService, negotiatedMtu, null))
                     }
                     is BleServiceState.WaitingResponse -> {
-                        val answer = bleReceiver.handleAnswer(
-                            bleSender.pendingCommand!!.id,
-                            event.value.toHexString()
-                        )
+                        val answer = try {
+                            bleReceiver.handleAnswer(
+                                bleSender.pendingCommand!!.id,
+                                event.value.toHexString()
+                            )
+                        } catch (_: IllegalArgumentException) {
+                            pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+                            return
+                        }
                         if (answer != null) {
                             bleSender.clearCommand()
                             pushState(BleServiceState.Ready(deviceService, mtuSize, answer))
@@ -285,7 +324,11 @@ class BleServiceStateMachine(
                         }
                     }
                 }
-                deviceService = bleServiceBuilder.build()
+                deviceService = try {
+                    bleServiceBuilder.build()
+                } catch (_: IllegalStateException) {
+                    null
+                }
             }
         }
 

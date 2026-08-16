@@ -97,6 +97,7 @@ class BleService : Service() {
             address,
             device
         )
+        gattCallback.bind(address)
         observeStateMachine()
         stateMachine?.build(this.applicationContext)
         bluetoothDeviceAddress = address

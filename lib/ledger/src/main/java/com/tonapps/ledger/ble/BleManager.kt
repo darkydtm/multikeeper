@@ -173,17 +173,25 @@ class BleManager internal constructor(
                                     _bleEvents.tryEmit(BleEvent.SendingEvent.SendSuccess(event.sendId))
                                 }
                                 is BleServiceEvent.SendAnswer -> {
-                                    pendingSendRequest.firstOrNull { it.id == event.sendId }
-                                        ?.let { callback ->
-                                            callback.onSuccess(event.answer)
+                                    val callback = synchronized(pendingSendRequest) {
+                                        pendingSendRequest.firstOrNull { it.id == event.sendId }?.also {
+                                            pendingSendRequest.remove(it)
                                         }
+                                    }
+                                    callback?.let {
+                                        callback.onSuccess(event.answer)
+                                    }
                                 }
                                 is BleServiceEvent.ErrorSend -> {
                                     _bleEvents.tryEmit(BleEvent.Error.SendError(event.error))
-                                    pendingSendRequest.firstOrNull { it.id == event.sendId }
-                                        ?.let { callback ->
-                                            callback.onError(event.error)
+                                    val callback = synchronized(pendingSendRequest) {
+                                        pendingSendRequest.firstOrNull { it.id == event.sendId }?.also {
+                                            pendingSendRequest.remove(it)
                                         }
+                                    }
+                                    callback?.let {
+                                        callback.onError(event.error)
+                                    }
                                 }
                                 else -> L.d("Event not handle $event")
                             }
@@ -452,6 +460,10 @@ class BleManager internal constructor(
 
     private fun disconnected(error: BleError? = null) {
         L.d("BleService disconnected")
+        val callbacks = synchronized(pendingSendRequest) {
+            pendingSendRequest.toList().also { pendingSendRequest.clear() }
+        }
+        callbacks.forEach { it.onError(error?.message ?: "Bluetooth device disconnected") }
         if (bluetoothService?.isBound == true) {
             tmpError = error
             context.unbindService(serviceConnection)

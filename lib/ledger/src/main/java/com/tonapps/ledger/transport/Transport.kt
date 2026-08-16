@@ -6,7 +6,6 @@ import java.nio.ByteOrder
 interface Transport {
 
     open fun close() {
-
     }
 
     suspend fun exchange(
@@ -21,6 +20,7 @@ interface Transport {
         data: ByteArray = ByteArray(0),
         responseCodes: List<Int> = listOf(StatusCodes.OK)
     ): ByteArray {
+        require(data.size <= 0xff) { "APDU data is too long" }
         val buffer = ByteBuffer.allocate(5 + data.size)
         buffer.put(system.toByte())
         buffer.put(command.toByte())
@@ -30,6 +30,9 @@ interface Transport {
         buffer.put(data)
 
         val response = exchange(buffer.array())
+        if (response.size < 2) {
+            throw TransportStatusException.InvalidDataReceived()
+        }
 
         val sw = readUInt16BE(response, response.size - 2)
 

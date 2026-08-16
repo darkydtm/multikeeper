@@ -9,7 +9,7 @@ sealed class GattCallbackEvent {
     }
     data class MtuNegociated(val mtuSize: Int): GattCallbackEvent()
     data class ServicesDiscovered(val services: List<BluetoothGattService>): GattCallbackEvent()
-    data class CharacteristicChanged(val value: ByteArray): GattCallbackEvent()
-    data class WriteDescriptorAck(val isSuccess: Boolean): GattCallbackEvent()
-    data class WriteCharacteristicAck(val isSuccess: Boolean): GattCallbackEvent()
+    data class CharacteristicChanged(val characteristicUuid: java.util.UUID, val value: ByteArray): GattCallbackEvent()
+    data class WriteDescriptorAck(val descriptorUuid: java.util.UUID?, val isSuccess: Boolean): GattCallbackEvent()
+    data class WriteCharacteristicAck(val characteristicUuid: java.util.UUID, val isSuccess: Boolean): GattCallbackEvent()
 }

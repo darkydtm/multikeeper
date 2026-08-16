@@ -1,6 +1,9 @@
 package com.tonapps.ledger.ton
 
 import com.tonapps.blockchain.ton.TONOpCode
+import com.tonapps.blockchain.ton.connect.TCAddress
+import com.tonapps.blockchain.ton.connect.TCDomain
+import com.tonapps.blockchain.ton.connect.TONProof
 import com.tonapps.blockchain.ton.extensions.storeAddress
 import com.tonapps.blockchain.ton.extensions.storeCoins
 import com.tonapps.blockchain.ton.extensions.storeOpCode
@@ -64,14 +67,22 @@ class TonTransport(private val transport: Transport) {
             )
 
             val data = r.sliceArray(0 until r.size - 2)
-            if (data[0] != 0x01.toByte()) {
+            if (data.size < 3 || data[0] != 0x01.toByte()) {
                 throw Exception("Invalid response")
             }
 
-            val nameLength = data[1].toInt()
-            val name = data.sliceArray(2 until 2 + nameLength).toString(Charsets.UTF_8)
-            val versionLength = data[2 + nameLength].toInt()
-            val version = data.sliceArray(3 + nameLength until 3 + nameLength + versionLength)
+            val nameLength = data[1].toInt() and 0xff
+            val nameEnd = 2 + nameLength
+            if (nameEnd >= data.size) {
+                throw Exception("Invalid response")
+            }
+            val name = data.sliceArray(2 until nameEnd).toString(Charsets.UTF_8)
+            val versionLength = data[nameEnd].toInt() and 0xff
+            val versionEnd = nameEnd + 1 + versionLength
+            if (versionEnd != data.size) {
+                throw Exception("Invalid response")
+            }
+            val version = data.sliceArray(nameEnd + 1 until versionEnd)
                 .toString(Charsets.UTF_8)
 
             return LedgerAppName(
@@ -147,16 +158,34 @@ class TonTransport(private val transport: Transport) {
     ): ByteArray {
         val publicKey = getAccount(path).publicKey
         val domainBytes = domain.toByteArray()
+        require(domainBytes.size <= 0xff) { "Domain is too long" }
+        val timestampLong = timestamp.longValueExact()
+        require(timestampLong >= 0) { "Timestamp must be unsigned" }
+        val payloadBytes = payload.toByteArray()
+        val payloadLimit = 0xff - path.toByteArray().size - 1 - domainBytes.size - 8
+        require(payloadBytes.size <= payloadLimit) { "Payload is too long" }
 
         val pkg =
             path.toByteArray() + LedgerWriter.putUint8(domainBytes.size) + domainBytes + LedgerWriter.putUint64(
-                timestamp
-            ) + payload.toByteArray()
+                BigInteger.valueOf(timestampLong)
+            ) + payloadBytes
 
         val res = doRequest(INS_PROOF, 0x01, 0x00, pkg)
+        if (res.size < 98) {
+            throw Exception("Invalid proof response")
+        }
         val signature = res.sliceArray(1 until 1 + 64)
         val hash = res.sliceArray(2 + 64 until 2 + 64 + 32)
-        if (!publicKey.verify(hash, signature)) {
+        val account = path.contract(publicKey).address
+        val expectedHash = sha256(
+            TONProof.prefixMessage + TONProof.Request(
+                timestamp = timestampLong,
+                payload = payload,
+                domain = TCDomain(domain),
+                address = TCAddress(account),
+            ).signatureMessage
+        )
+        if (!hash.contentEquals(expectedHash) || !publicKey.verify(expectedHash, signature)) {
             throw Exception("Received signature is invalid")
         }
 
@@ -596,9 +625,13 @@ class TonTransport(private val transport: Transport) {
         }
 
         // Parse result
+        if (res.size < 98) {
+            throw Exception("Invalid transaction response")
+        }
         val signature = res.slice(1 until 65).toByteArray()
         val hash = res.slice(66 until 98).toByteArray()
-        if (!hash.contentEquals(transfer.hash().toByteArray())) {
+        val expectedHash = transfer.hash().toByteArray()
+        if (!hash.contentEquals(expectedHash)) {
             throw Exception(
                 "Hash mismatch. Expected: ${hex(transfer.hash().toByteArray())}, got: ${
                     hex(
@@ -606,6 +639,9 @@ class TonTransport(private val transport: Transport) {
                     )
                 }"
             )
+        }
+        if (!publicKey.verify(expectedHash, signature)) {
+            throw Exception("Received transaction signature is invalid")
         }
 
         // Build a message

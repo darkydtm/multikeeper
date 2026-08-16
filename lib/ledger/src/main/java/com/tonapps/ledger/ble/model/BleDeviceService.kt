@@ -1,6 +1,7 @@
 package com.tonapps.ledger.ble.model
 
 import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import java.util.*
 
 data class BleDeviceService(
@@ -29,11 +30,32 @@ data class BleDeviceService(
             return this
         }
 
-        fun build(): BleDeviceService = BleDeviceService(
-            uuid = uuid,
-            writeCharacteristic = writeCharacteristic,
-            writeNoAnswerCharacteristic = writeNoAnswerCharacteristic,
-            notifyCharacteristic = notifyCharacteristic,
-        )
+        fun build(): BleDeviceService {
+            check(::writeCharacteristic.isInitialized && ::notifyCharacteristic.isInitialized) {
+                "Required BLE characteristics are missing"
+            }
+            check(writeCharacteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0) {
+                "BLE write characteristic does not support write"
+            }
+            check(notifyCharacteristic.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0) {
+                "BLE notify characteristic does not support notifications"
+            }
+            check(notifyCharacteristic.descriptors.any {
+                it.uuid == BluetoothGattDescriptor.UUID_CLIENT_CHARACTERISTIC_CONFIG
+            }) {
+                "BLE notify characteristic has no client configuration descriptor"
+            }
+            writeNoAnswerCharacteristic?.let {
+                check(it.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0) {
+                    "BLE command characteristic does not support write without response"
+                }
+            }
+            return BleDeviceService(
+                uuid = uuid,
+                writeCharacteristic = writeCharacteristic,
+                writeNoAnswerCharacteristic = writeNoAnswerCharacteristic,
+                notifyCharacteristic = notifyCharacteristic,
+            )
+        }
     }
 }

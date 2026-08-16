@@ -8,12 +8,24 @@ class BleReceiver {
     private var pendingAnswers: MutableList<FrameCommand> = mutableListOf()
     fun handleAnswer(id: String, hexAnswer: String): BleAnswer? {
         val command: FrameCommand = FrameCommand.fromHex(id, hexAnswer)
+        if (command.index == 0) {
+            pendingAnswers.clear()
+        } else if (pendingAnswers.isEmpty() || command.index != pendingAnswers.last().index + 1 ||
+            command.id != pendingAnswers.first().id || command.size != 0) {
+            pendingAnswers.clear()
+            throw IllegalArgumentException("Invalid BLE frame order")
+        }
         pendingAnswers.add(command)
+
+        val totalReceivedSize = pendingAnswers.sumOf { it.apdu.size }
+        if (totalReceivedSize > pendingAnswers.first().size) {
+            pendingAnswers.clear()
+            throw IllegalArgumentException("Invalid BLE frame length")
+        }
 
         val isAnswerComplete = if (command.index == 0) {
             command.size == command.apdu.size
         } else {
-            val totalReceivedSize = pendingAnswers.sumOf { it.apdu.size }
             pendingAnswers.first().size == totalReceivedSize
         }
 

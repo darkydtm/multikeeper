@@ -7,18 +7,19 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import com.tonapps.ledger.ble.service.model.BlePairingEvent
-import com.tonapps.ledger.ble.service.model.GattCallbackEvent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.runBlocking
 
 class BlePairingCallbackFlow(
-    private val context: Context
+    private val context: Context,
+    private val deviceAddress: String,
 ) {
     private val pairingReceiver: BroadcastReceiver = object : BroadcastReceiver() {
         @SuppressLint("MissingPermission")
         override fun onReceive(context: Context, intent: Intent) {
-            val device: BluetoothDevice = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)!!
+            val device: BluetoothDevice = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE) ?: return
+            if (!device.address.equals(deviceAddress, ignoreCase = true)) return
             when (device.bondState) {
                 BluetoothDevice.BOND_NONE -> pushEvent(BlePairingEvent.None)
                 BluetoothDevice.BOND_BONDING -> pushEvent(BlePairingEvent.Pairing)

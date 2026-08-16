@@ -20,6 +20,14 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         get() = _gattFlow
 
     private var hasDiscoveredService: Boolean = false
+    private var deviceAddress: String? = null
+
+    fun bind(address: String) {
+        deviceAddress = address
+    }
+
+    private fun isBound(gatt: BluetoothGatt): Boolean =
+        deviceAddress != null && gatt.device.address.equals(deviceAddress, ignoreCase = true)
 
     private fun pushEvent(event: GattCallbackEvent) {
         runBlocking {
@@ -28,6 +36,7 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
     }
 
     override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+        if (!isBound(gatt)) return
         L.d("GATT connection state change. state: $newState, status: $status")
         when (newState) {
             BluetoothProfile.STATE_CONNECTED -> {
@@ -43,6 +52,7 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         gatt: BluetoothGatt,
         status: Int
     ) {
+        if (!isBound(gatt)) return
         L.d("------------- onServicesDiscovered status: $status")
         if (status == BluetoothGatt.GATT_SUCCESS) {
             hasDiscoveredService = true
@@ -57,6 +67,7 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
 
     override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
         super.onMtuChanged(gatt, mtu, status)
+        if (gatt == null || !isBound(gatt)) return
         //Seems that the callback can be reached without calling gatt.requestMtu(...)
         if (hasDiscoveredService) {
             L.d("------------ onMtuChanged => MTU new size: $mtu")
@@ -74,9 +85,10 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         descriptor: BluetoothGattDescriptor?,
         status: Int
     ) {
+        if (!isBound(gatt)) return
         super.onDescriptorWrite(gatt, descriptor, status)
         L.d("------------- onDescriptorWrite status: $status")
-        pushEvent(GattCallbackEvent.WriteDescriptorAck(status == BluetoothGatt.GATT_SUCCESS))
+        pushEvent(GattCallbackEvent.WriteDescriptorAck(descriptor?.uuid, status == BluetoothGatt.GATT_SUCCESS))
     }
 
     override fun onCharacteristicWrite(
@@ -84,8 +96,9 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         characteristic: BluetoothGattCharacteristic,
         status: Int
     ) {
+        if (!isBound(gatt)) return
         L.d("------------- onCharacteristicWrite status: $status")
-        pushEvent(GattCallbackEvent.WriteCharacteristicAck(status == BluetoothGatt.GATT_SUCCESS))
+        pushEvent(GattCallbackEvent.WriteCharacteristicAck(characteristic.uuid, status == BluetoothGatt.GATT_SUCCESS))
 
     }
 
@@ -93,13 +106,14 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         gatt: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic
     ) {
+        if (!isBound(gatt)) return
         L.d("------------- onCharacteristicChanged status: ${characteristic.value.toHexString()}")
-        pushEvent(GattCallbackEvent.CharacteristicChanged(characteristic.value))
+        pushEvent(GattCallbackEvent.CharacteristicChanged(characteristic.uuid, characteristic.value))
     }
 
     fun clear() {
         hasDiscoveredService = false
+        deviceAddress = null
         _gattFlow.resetReplayCache()
     }
 }
-
