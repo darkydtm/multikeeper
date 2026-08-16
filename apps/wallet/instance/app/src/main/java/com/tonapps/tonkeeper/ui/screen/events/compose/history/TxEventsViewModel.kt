@@ -33,6 +33,10 @@ import com.tonapps.wallet.data.events.tx.model.TxActionBody
 import com.tonapps.wallet.data.events.tx.model.TxEvent
 import com.tonapps.wallet.data.passcode.PasscodeManager
 import com.tonapps.wallet.data.settings.SettingsRepository
+import com.tonapps.wallet.data.gem.GemWalletDataSource
+import com.tonapps.wallet.data.gem.GemRuntimeCoordinator
+import com.tonapps.wallet.data.gem.GemWebSocketEvent
+import com.tonapps.tonkeeper.ui.screen.events.compose.history.paging.GemHistoryMapper
 import com.tonapps.wallet.localization.Localization
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -59,8 +63,19 @@ class TxEventsViewModel(
     private val collectiblesRepository: CollectiblesRepository,
     private val passcodeManager: PasscodeManager,
     private val transactionManager: TransactionManager,
-    private val txEventUiMapper: TxEventUiMapper,
+	private val txEventUiMapper: TxEventUiMapper,
+	private val gemWalletDataSource: GemWalletDataSource,
+	private val gemRuntimeCoordinator: GemRuntimeCoordinator,
 ) : BaseWalletVM(app) {
+
+	private val gemHistoryMapper = GemHistoryMapper(
+		labels = GemHistoryMapper.Labels(
+			received = getString(Localization.received),
+			sent = getString(Localization.sent),
+			failed = getString(Localization.failed),
+			unknown = getString(Localization.unknown),
+		),
+	)
 
     private val _uiCommandFlow = MutableEffectFlow<TxComposableCommand>()
     val uiCommandFlow = _uiCommandFlow.asSharedFlow()
@@ -124,10 +139,17 @@ class TxEventsViewModel(
     }.distinctUntilChanged().cachedIn(viewModelScope)
 
     init {
-        transactionManager.eventsFlow(wallet).collectFlow { event ->
-            requestRefresh()
-            selectFilterById()
-        }
+		transactionManager.eventsFlow(wallet).collectFlow { event ->
+			requestRefresh()
+			selectFilterById()
+		}
+
+		gemRuntimeCoordinator.events.collectFlow { event ->
+			if (wallet.isGem && event is GemWebSocketEvent.Transactions && event.walletId == wallet.id) {
+				requestRefresh()
+				selectFilterById()
+			}
+		}
 
         combine(
             settingsRepository.tokenPrefsChangedFlow.drop(1),
@@ -195,6 +217,9 @@ class TxEventsViewModel(
     }
 
     private fun onClick(id: String, part: EventItemClickPart) {
+        if (wallet.isGem) {
+            return
+        }
         val tx = TxPagingSource.get(id) ?: return
         if (part is EventItemClickPart.Product) {
             viewModelScope.launch(Dispatchers.IO) {
@@ -259,9 +284,11 @@ class TxEventsViewModel(
         wallet = wallet,
         accountRepository = accountRepository,
         eventsRepository = eventsRepository,
-        settingsRepository = settingsRepository,
-        txEventUiMapper = txEventUiMapper
-    )
+		settingsRepository = settingsRepository,
+		txEventUiMapper = txEventUiMapper,
+		gemWalletDataSource = gemWalletDataSource,
+		gemHistoryMapper = gemHistoryMapper,
+	)
 
     private companion object {
         private val monthYearFormatter = SimpleDateFormat("MMMM_yyyy", Locale.US)

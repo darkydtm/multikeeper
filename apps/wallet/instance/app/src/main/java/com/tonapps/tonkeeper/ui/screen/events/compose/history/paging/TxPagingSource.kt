@@ -11,7 +11,13 @@ import com.tonapps.wallet.data.events.tx.TxFetchQuery
 import com.tonapps.wallet.data.events.tx.TxPage
 import com.tonapps.wallet.data.events.tx.model.TxEvent
 import com.tonapps.wallet.data.settings.SettingsRepository
+import com.tonapps.wallet.data.gem.Chain
+import com.tonapps.wallet.data.gem.GemWalletDataSource
+import com.tonapps.wallet.data.gem.Provider
+import com.tonapps.wallet.data.gem.TransactionRecord
+import com.tonapps.wallet.data.gem.WalletId
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import ui.components.events.UiEvent
@@ -23,6 +29,8 @@ internal class TxPagingSource(
     private val eventsRepository: EventsRepository,
     private val settingsRepository: SettingsRepository,
     private val txEventUiMapper: TxEventUiMapper,
+    private val gemWalletDataSource: GemWalletDataSource,
+    private val gemHistoryMapper: GemHistoryMapper,
 ): PagingSource<Timestamp, UiEvent.Item>() {
 
     private val tronParamsProvider = TxTronParamsProvider(
@@ -36,8 +44,38 @@ internal class TxPagingSource(
     override suspend fun load(
         params: LoadParams<Timestamp>
     ): LoadResult<Timestamp, UiEvent.Item> = withContext(Dispatchers.IO) {
-        if (wallet.isGem) {
-            return@withContext LoadResult.Page(emptyList(), null, null)
+		if (wallet.isGem) {
+			return@withContext try {
+				val records = mutableListOf<TransactionRecord>()
+				var firstError: Throwable? = null
+				var loadedChain = false
+				wallet.accounts.mapNotNull { account ->
+					Chain.entries.firstOrNull { it.key == account.chain && it.provider == Provider.Gem }
+				}.distinct().forEach { chain ->
+					try {
+						records += gemWalletDataSource.getTransactions(WalletId(wallet.id), chain, 0L).getOrThrow()
+						loadedChain = true
+					} catch (error: CancellationException) {
+						throw error
+					} catch (error: Throwable) {
+						if (firstError == null) firstError = error
+					}
+				}
+				if (!loadedChain) firstError?.let { throw it }
+
+				LoadResult.Page(
+					data = records.distinctBy(TransactionRecord::cacheKey)
+						.sortedByDescending { it.timestamp ?: 0L }
+						.map(gemHistoryMapper::toUiItem)
+						.toImmutableList(),
+                    prevKey = null,
+                    nextKey = null,
+                )
+			} catch (e: CancellationException) {
+				throw e
+			} catch (e: Throwable) {
+				LoadResult.Error(e)
+			}
         }
         try {
             val beforeTimestamp = params.key
