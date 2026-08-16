@@ -16,76 +16,79 @@ internal class MasterKey(
     private val prefs: SecurityStorageBox
 ) {
 
-    private companion object {
-        private const val KEY_SIZE = 32
-        private const val IV_SIZE = 16
-
-        private const val BODY_KEY = "master_body"
-        private const val IV_KEY = "master_iv"
-    }
-
     internal fun getSecret(passwordSecret: SecretKey): SecretKey? {
-        val secretKey = runCatching {
-            val iv = prefs.getByteArray(IV_KEY) ?: throw Exception("No iv")
-            val encrypted = prefs.getByteArray(BODY_KEY)
-            if (encrypted == null) {
-                clear(iv)
-                throw Exception("No body")
-            }
+        var iv: ByteArray? = null
+        var encrypted: ByteArray? = null
+        var key: ByteArray? = null
 
-            val key = passwordSecret.decrypt(iv, encrypted)
-            clear(iv, encrypted)
-            if (key == null) {
-                throw Exception("Failed to decrypt")
-            }
-
-            SimpleSecretSpec(key)
-        }.getOrNull()
-        passwordSecret.safeDestroy()
-        return secretKey
+        return try {
+            iv = prefs.getByteArray(IV_KEY) ?: throw Exception("No iv")
+            encrypted = prefs.getByteArray(BODY_KEY) ?: throw Exception("No body")
+            key = passwordSecret.decrypt(iv!!, encrypted!!)
+                ?: throw Exception("Failed to decrypt")
+            SimpleSecretSpec(key!!)
+        } catch (e: Throwable) {
+            null
+        } finally {
+            passwordSecret.safeDestroy()
+            clear(iv, encrypted, key)
+        }
     }
 
     internal fun newSecret(passwordSecret: SecretKey): SecretKey? {
-        val secretKey = Security.generatePrivateKey(KEY_SIZE)
-        val secretEncoded = secretKey.encoded
-        val iv = Security.randomBytes(IV_SIZE)
+        var secretKey: SecretKey? = null
+        var secretEncoded: ByteArray? = null
+        var iv: ByteArray? = null
+        var encrypted: ByteArray? = null
+        var keepSecret = false
 
-        val encrypted = passwordSecret.encrypt(iv, secretEncoded)
-        passwordSecret.safeDestroy()
-        secretEncoded.clear()
-
-        if (encrypted == null) {
-            secretKey.safeDestroy()
-            clear(iv)
-            return null
+        return try {
+            secretKey = Security.generatePrivateKey(KEY_SIZE)
+            secretEncoded = secretKey!!.encoded
+            iv = Security.randomBytes(IV_SIZE)
+            encrypted = passwordSecret.encrypt(iv!!, secretEncoded!!)
+            if (encrypted == null) {
+                null
+            } else {
+                put(iv!!, encrypted!!)
+                keepSecret = true
+                secretKey
+            }
+        } finally {
+            passwordSecret.safeDestroy()
+            clear(secretEncoded, iv, encrypted)
+            if (!keepSecret) {
+                secretKey?.safeDestroy()
+            }
         }
-
-        put(iv, encrypted)
-        return secretKey
     }
 
     internal fun reEncryptSecret(oldPasswordSecret: SecretKey, newPasswordSecret: SecretKey): Boolean {
-        val currentSecret = getSecret(oldPasswordSecret)
-        if (currentSecret == null) {
+        var currentSecret: SecretKey? = null
+        var currentSecretEncoded: ByteArray? = null
+        var newIv: ByteArray? = null
+        var encrypted: ByteArray? = null
+
+        return try {
+            currentSecret = getSecret(oldPasswordSecret)
+            if (currentSecret == null) {
+                false
+            } else {
+                currentSecretEncoded = currentSecret!!.encoded
+                newIv = Security.randomBytes(IV_SIZE)
+                encrypted = newPasswordSecret.encrypt(newIv!!, currentSecretEncoded!!)
+                if (encrypted == null) {
+                    false
+                } else {
+                    put(newIv!!, encrypted!!)
+                    true
+                }
+            }
+        } finally {
+            currentSecret?.safeDestroy()
             newPasswordSecret.safeDestroy()
-            return false
+            clear(currentSecretEncoded, newIv, encrypted)
         }
-
-        val currentSecretEncoded = currentSecret.encoded
-        val newIv = Security.randomBytes(IV_SIZE)
-
-        val encrypted = newPasswordSecret.encrypt(newIv, currentSecretEncoded)
-
-        newPasswordSecret.safeDestroy()
-        currentSecretEncoded.clear()
-
-        if (encrypted == null) {
-            newIv.clear()
-            return false
-        }
-
-        put(newIv, encrypted)
-        return true
     }
 
     @SuppressLint("ApplySharedPref")
@@ -101,5 +104,13 @@ internal class MasterKey(
         } finally {
             clear(iv, encrypted)
         }
+    }
+
+    private companion object {
+        private const val KEY_SIZE = 32
+        private const val IV_SIZE = 16
+
+        private const val BODY_KEY = "master_body"
+        private const val IV_KEY = "master_iv"
     }
 }
