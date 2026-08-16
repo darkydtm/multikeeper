@@ -220,7 +220,7 @@ class AssetsManager(
 			val account = wallet.accounts.first { it.chain == chain.key }
 			val assets = gemWalletDataSource.getAssets(GemWalletId(wallet.id), chain).getOrNull()
             if (assets == null) {
-                if (cached.remove(chain)) {
+                if (cached.remove(chain) != null) {
                     gemAssetsCache[cacheKey] = cached.toMap()
                 }
                 continue
