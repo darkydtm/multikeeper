@@ -5,6 +5,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
@@ -31,6 +33,57 @@ class GemRuntimeCoordinatorTest {
 			GemRefreshEvent.Balances(WalletId("wallet"), setOf(Chain.Ethereum)),
 			event.await(),
 		)
+	}
+
+	@Test
+	fun `delivers a refresh event to a late subscriber`() = runBlocking {
+		val coordinator = coordinator()
+		coordinator.processEvent(
+			GemWebSocketEvent.Balances(
+				listOf(GemBalanceInvalidation("wallet", "ethereum_native")),
+			),
+		)
+
+		assertEquals(
+			GemRefreshEvent.Balances(WalletId("wallet"), setOf(Chain.Ethereum)),
+			coordinator.refreshEvents.first(),
+		)
+	}
+
+	@Test
+	fun `coalesces balance and transaction invalidations for a wallet`() = runBlocking {
+		val coordinator = coordinator()
+		coordinator.processEvent(
+			GemWebSocketEvent.Balances(
+				listOf(GemBalanceInvalidation("wallet", "ethereum_native")),
+			),
+		)
+		coordinator.processEvent(
+			GemWebSocketEvent.Balances(
+				listOf(GemBalanceInvalidation("wallet", "bitcoin_native")),
+			),
+		)
+		coordinator.processEvent(GemWebSocketEvent.Transactions("wallet", listOf("tx-1", "tx-1")))
+
+		assertEquals(
+			listOf(
+				GemRefreshEvent.Balances(WalletId("wallet"), setOf(Chain.Ethereum, Chain.Bitcoin)),
+				GemRefreshEvent.Transactions(WalletId("wallet"), setOf("tx-1")),
+			),
+			coordinator.refreshEvents.take(2).toList(),
+		)
+	}
+
+	@Test
+	fun `bounds late transaction refreshes to one coalesced event`() = runBlocking {
+		val coordinator = coordinator()
+		repeat(64) { index ->
+			coordinator.processEvent(GemWebSocketEvent.Transactions("wallet", listOf("tx-$index")))
+		}
+
+		val event = coordinator.refreshEvents.first()
+		assertTrue(event is GemRefreshEvent.Transactions)
+		assertEquals((0..63).map { "tx-$it" }.toSet(), (event as GemRefreshEvent.Transactions).transactionIds)
 	}
 
 	@Test
