@@ -232,7 +232,7 @@ class GemAuthoritativeRefreshStore(
 						bounded[id] = transaction
 					}
 					current.copy(
-						transactions = bounded.entries
+						transactions = bounded.entries.toList()
 							.takeLast(MAX_CACHE_ENTRIES)
 							.associate { it.toPair() },
 					)
