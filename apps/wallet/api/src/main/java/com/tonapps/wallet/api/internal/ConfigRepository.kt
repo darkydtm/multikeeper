@@ -49,6 +49,9 @@ internal class ConfigRepository(
     }
 
     private suspend fun setConfig(config: ConfigResponseEntity) = withContext(Dispatchers.Main) {
+        if (!config.isValid()) {
+            return@withContext
+        }
         configMainnetEntity = config.mainnet
         configTestnetEntity = config.testnet
         configTetraEntity = config.tetra
@@ -57,15 +60,31 @@ internal class ConfigRepository(
 
     private fun readCache(): ConfigResponseEntity? {
         if (configFile.exists() && configFile.length() > 0) {
-            return configFile.readBytes().toParcel()
+            return try {
+                configFile.readBytes().toParcel<ConfigResponseEntity>()?.takeIf { it.isValid() }
+                    ?: run {
+                        configFile.delete()
+                        null
+                    }
+            } catch (e: Exception) {
+                configFile.delete()
+                null
+            }
         }
         return null
     }
 
     private suspend fun remote(): ConfigResponseEntity? = withContext(Dispatchers.IO) {
         val response = internalApi.downloadConfig() ?: return@withContext null
-        configFile.writeBytes(response.toByteArray())
-        response
+        if (!response.isValid()) {
+            return@withContext null
+        }
+        try {
+            configFile.writeBytes(response.toByteArray())
+            response
+        } catch (e: Exception) {
+            null
+        }
     }
 
     suspend fun refresh() {

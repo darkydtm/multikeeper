@@ -15,6 +15,8 @@ data class ConfigResponseEntity(
         testnet = ConfigEntity(json.getJSONObject("testnet"), debug),
         tetra = ConfigEntity(json.getJSONObject("tetra"), debug)
     )
+
+    internal fun isValid(): Boolean {
+        return mainnet.isValid() && testnet.isValid() && tetra.isValid()
+    }
 }
-
-

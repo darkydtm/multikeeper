@@ -9,6 +9,8 @@ import com.tonapps.wallet.api.Constants
 import kotlinx.parcelize.IgnoredOnParcel
 import kotlinx.parcelize.Parcelize
 import org.json.JSONObject
+import java.net.URI
+import java.util.Locale
 
 @Parcelize
 data class ConfigEntity(
@@ -133,7 +135,7 @@ data class ConfigEntity(
         scamAPIURL = json.optString("scam_api_url", "https://scam.tonkeeper.com"),
         reportAmount = Coins.of(json.optString("reportAmount") ?: "0.03"),
         stories = json.getJSONArray("stories").toStringList(),
-        apkDownloadUrl = json.optString("apk_download_url"),
+        apkDownloadUrl = json.optString("apk_download_url").takeIf { it.isNotBlank() },
         apkName = json.optString("apk_name")?.let { AppVersion(it.removePrefix("v")) },
         tronApiUrl = json.optString("tron_api_url", "https://api.trongrid.io"),
         enabledStaking = json.optJSONArray("enabled_staking")?.let { array ->
@@ -210,6 +212,63 @@ data class ConfigEntity(
         tronFeeFaqUrl = "https://tonkeeper.helpscoutdocs.com/article/137-multichain"
     )
 
+    internal fun isValid(): Boolean {
+        return try {
+            validateSupportLink(supportLink)
+
+            validateTrustedHttpsUrl("nftExplorer", nftExplorer, "%s")
+            validateTrustedHttpsUrl("transactionExplorer", transactionExplorer, "%s")
+            validateTrustedHttpsUrl("accountExplorer", accountExplorer, "%s")
+
+            listOf(
+                "tonapiMainnetHost" to tonapiMainnetHost,
+                "tonapiTestnetHost" to tonapiTestnetHost,
+                "tonConnectBridgeHost" to tonConnectBridgeHost,
+                "stonfiUrl" to stonfiUrl,
+                "tonNFTsMarketplaceEndpoint" to tonNFTsMarketplaceEndpoint,
+                "directSupportUrl" to directSupportUrl,
+                "tonkeeperNewsUrl" to tonkeeperNewsUrl,
+                "tonCommunityUrl" to tonCommunityUrl,
+                "tonCommunityChatUrl" to tonCommunityChatUrl,
+                "faqUrl" to faqUrl,
+                "aptabaseEndpoint" to aptabaseEndpoint,
+                "scamEndpoint" to scamEndpoint,
+                "batteryHost" to batteryHost,
+                "batteryTestnetHost" to batteryTestnetHost,
+                "batteryRefundEndpoint" to batteryRefundEndpoint,
+                "stakingInfoUrl" to stakingInfoUrl,
+                "tonapiSSEEndpoint" to tonapiSSEEndpoint,
+                "tonapiSSETestnetEndpoint" to tonapiSSETestnetEndpoint,
+                "toncenterSSEEndpoint" to toncenterSSEEndpoint,
+                "toncenterSSETestnetEndpoint" to toncenterSSETestnetEndpoint,
+                "scamAPIURL" to scamAPIURL,
+                "tronApiUrl" to tronApiUrl,
+                "tonkeeperApiUrl" to tonkeeperApiUrl,
+                "tronSwapUrl" to tronSwapUrl,
+                "privacyPolicyUrl" to privacyPolicyUrl,
+                "termsOfUseUrl" to termsOfUseUrl,
+                "webSwapsUrl" to webSwapsUrl,
+                "tronFeeFaqUrl" to tronFeeFaqUrl,
+            ).forEach { (name, url) ->
+                validateTrustedHttpsUrl(name, url)
+            }
+
+            apkDownloadUrl?.let {
+                validateTrustedHttpsUrl("apkDownloadUrl", it)
+            }
+
+            qrScannerExtends.forEach { extension ->
+                extension.regex
+                validateTrustedHttpsUrl("qrScannerExtends.url", extension.url, "{{QR_CODE}}")
+            }
+
+            domains.forEach { validateTrustedHttpsUrl("domains", it) }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     fun formatTransactionExplorer(testnet: Boolean, tron: Boolean, hash: String): String {
         return if (tron) {
             "https://tronscan.org/#/transaction/$hash"
@@ -222,5 +281,73 @@ data class ConfigEntity(
 
     companion object {
         val default = ConfigEntity()
+
+		private val trustedHosts = setOf(
+            "anonymous-analytics.tonkeeper.com",
+            "api.tonkeeper.com",
+            "api.trongrid.io",
+            "bat.tonkeeper.com",
+            "battery-refund-app.vercel.app",
+            "battery.tonkeeper.com",
+            "bridge.tonapi.io",
+            "dapp.aeon.xyz",
+            "github.com",
+            "keeper.tonapi.io",
+            "rt-testnet.tonapi.io",
+            "rt.tonapi.io",
+            "scam.tonkeeper.com",
+            "swap-widget.tonkeeper.com",
+            "swap.tonkeeper.com",
+            "t.me",
+            "telegram.me",
+            "tetra.tonapi.io",
+            "tetra.tonviewer.com",
+            "testnet-battery.tonkeeper.com",
+            "testnet.getgems.io",
+            "testnet.tonapi.io",
+            "testnet.tonviewer.com",
+            "ton.diamonds",
+            "ton.org",
+            "tonapi.io",
+            "toncenterproxy.tonapi.io",
+            "tonkeeper.com",
+            "tonkeeper.helpscoutdocs.com",
+            "tonviewer.com",
+            "trading.tonkeeper.com",
+            "trongrid.io",
+            "widget.letsexchange.io",
+        )
+
+        private fun validateTrustedHttpsUrl(name: String, value: String, placeholder: String? = null) {
+            require(value.isNotBlank() && value == value.trim()) { "Invalid config URL: $name" }
+            require(value.none { it.isWhitespace() || it.isISOControl() }) { "Invalid config URL: $name" }
+            require(placeholder == null || value.contains(placeholder)) { "Invalid config URL: $name" }
+
+            val candidate = placeholder?.let { value.replace(it, "config-placeholder") } ?: value
+            val uri = try {
+                URI(candidate)
+            } catch (e: Exception) {
+                throw IllegalArgumentException("Invalid config URL: $name", e)
+            }
+            val host = uri.host?.lowercase(Locale.US)
+            require(uri.scheme.equals("https", ignoreCase = true)) { "Invalid config URL scheme: $name" }
+            require(host != null && uri.userInfo == null) { "Invalid config URL: $name" }
+            require(uri.port == -1 || uri.port == 443) { "Invalid config URL port: $name" }
+            require(host in trustedHosts) { "Untrusted config URL host: $name" }
+        }
+
+        private fun validateSupportLink(value: String) {
+            require(value.isNotBlank() && value == value.trim()) { "Invalid config support link" }
+            require(value.none { it.isWhitespace() || it.isISOControl() }) { "Invalid config support link" }
+            val uri = URI(value)
+            require(
+                uri.scheme.equals("mailto", ignoreCase = true) &&
+                    uri.isOpaque &&
+                    uri.rawSchemeSpecificPart.isNotBlank() &&
+                    uri.rawAuthority == null &&
+                    uri.rawFragment == null
+            ) {
+                "Invalid config support link"
+		}
     }
 }

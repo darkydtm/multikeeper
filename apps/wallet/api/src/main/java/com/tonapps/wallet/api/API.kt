@@ -196,7 +196,8 @@ class API(
 
         val isContains = getConfig(network)
             .domains
-            .contains(host)
+            .mapNotNull { Uri.parse(it).host }
+            .any { it.equals(host, ignoreCase = true) }
 
         if (!isContains) {
             throw Exception("Invalid host. Should be tonapi.io")
