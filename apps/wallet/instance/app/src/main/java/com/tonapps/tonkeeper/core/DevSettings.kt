@@ -71,14 +71,24 @@ object DevSettings {
             }
         }
 
-    var tonConnectLogs: Boolean = prefs.getBoolean("ton_connect_logs", false)
-        get() = field && BuildConfig.DEBUG
-        set(value) {
-            if (field != value) {
-                field = value
-                prefs.putBoolean("ton_connect_logs", value)
-            }
-        }
+	var tonConnectLogs: Boolean = if (BuildConfig.DEBUG) {
+		prefs.getBoolean("ton_connect_logs", false)
+	} else {
+		prefs.edit().remove("ton_connect_logs").apply()
+		false
+	}
+		get() = field && BuildConfig.DEBUG
+		set(value) {
+			if (!BuildConfig.DEBUG) {
+				field = false
+				prefs.edit().remove("ton_connect_logs").apply()
+				return
+			}
+			if (field != value) {
+				field = value
+				prefs.putBoolean("ton_connect_logs", value)
+			}
+		}
 
     var isLogsEnabled: Boolean = prefs.getBoolean("is_logs_enabled", false)
         set(value) {
