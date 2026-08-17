@@ -26,6 +26,7 @@ import com.tonapps.extensions.short4
 import com.tonapps.tonkeeper.extensions.debugToast
 import com.tonapps.tonkeeper.extensions.getWalletBadges
 import com.tonapps.tonkeeper.extensions.toast
+import com.tonapps.tonkeeper.manager.tonconnect.TonConnect
 import com.tonapps.tonkeeper.manager.tonconnect.bridge.model.BridgeError
 import com.tonapps.tonkeeper.ui.base.BaseWalletScreen
 import com.tonapps.tonkeeper.ui.base.ScreenContext
@@ -263,6 +264,9 @@ class TonConnectScreen: BaseWalletScreen<ScreenContext.None>(R.layout.fragment_t
 
     private fun returnToApp() {
         val uri = args.returnUri ?: return
+        if (!TonConnect.isSafeReturnUri(uri)) {
+            return
+        }
         if (uri.scheme == "tg" || uri.host == "t.me") {
             returnToTg(uri, args.fromPackageName)
         } else {
@@ -309,7 +313,9 @@ class TonConnectScreen: BaseWalletScreen<ScreenContext.None>(R.layout.fragment_t
         applyAppTitle(args.app.host)
         applyAppDescription(args.app.name, if (!state.hasWalletPicker) {
             state.wallet.address
-        } else null)
+        } else {
+            null
+        })
 
         if (state.hasWalletPicker) {
             walletPickerView.visibility = View.VISIBLE

@@ -2,13 +2,10 @@ package com.tonapps.tonkeeper.manager.tonconnect
 
 import android.net.Uri
 import android.os.Parcelable
-import com.tonapps.log.L
 import androidx.core.net.toUri
-import com.tonapps.extensions.getMultipleQuery
 import com.tonapps.security.Security
 import com.tonapps.security.hex
 import kotlinx.parcelize.Parcelize
-import org.json.JSONObject
 
 @Parcelize
 data class TonConnect(
@@ -52,7 +49,7 @@ data class TonConnect(
             value: String?,
             refSource: Uri?
         ): Uri? {
-            return if (value.isNullOrBlank() || value.equals("back", ignoreCase = true)) {
+            val uri = if (value.isNullOrBlank() || value.equals("back", ignoreCase = true)) {
                 refSource
             } else if (value.equals("none", ignoreCase = true)) {
                 null
@@ -62,6 +59,22 @@ data class TonConnect(
                 } catch (e: Exception) {
                     throw TonConnectException.ReturnParsingError(value)
                 }
+            }
+            return uri?.takeIf(::isSafeReturnUri)
+        }
+
+        fun isSafeReturnUri(uri: Uri?): Boolean {
+            if (uri == null) {
+                return false
+            }
+
+            val scheme = uri.scheme?.lowercase()
+            val host = uri.host?.lowercase()
+            return when {
+                scheme == "tg" -> host == "resolve"
+                scheme == "https" && host == "t.me" -> uri.port == -1 && !uri.path.isNullOrBlank()
+                scheme == "tc" -> uri.toString().startsWith("tc://", ignoreCase = true)
+                else -> false
             }
         }
 
