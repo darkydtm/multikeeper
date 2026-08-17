@@ -36,6 +36,7 @@ internal class MasterKey(
     }
 
     internal fun newSecret(passwordSecret: SecretKey): SecretKey? {
+        var generatedSecret: SecretKey? = null
         var secretKey: SecretKey? = null
         var secretEncoded: ByteArray? = null
         var iv: ByteArray? = null
@@ -43,8 +44,9 @@ internal class MasterKey(
         var keepSecret = false
 
         return try {
-            secretKey = Security.generatePrivateKey(KEY_SIZE)
-            secretEncoded = secretKey!!.encoded
+            generatedSecret = Security.generatePrivateKey(KEY_SIZE)
+            secretEncoded = generatedSecret!!.encoded
+            secretKey = SimpleSecretSpec(secretEncoded!!.copyOf())
             iv = Security.randomBytes(IV_SIZE)
             encrypted = passwordSecret.encrypt(iv!!, secretEncoded!!)
             if (encrypted == null) {
@@ -57,6 +59,7 @@ internal class MasterKey(
         } finally {
             passwordSecret.safeDestroy()
             clear(secretEncoded, iv, encrypted)
+            generatedSecret?.safeDestroy()
             if (!keepSecret) {
                 secretKey?.safeDestroy()
             }

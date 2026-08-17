@@ -1,13 +1,7 @@
 package com.tonapps.security
 
-import android.content.Context
-import android.content.SharedPreferences
-import android.util.AtomicFile
 import android.util.Base64
-import androidx.security.crypto.EncryptedSharedPreferences
-import com.tonapps.security.spec.SimpleSecretSpec
 import java.io.Closeable
-import java.io.File
 import java.security.Key
 import javax.crypto.SecretKey
 
@@ -39,14 +33,14 @@ fun clear(vararg arrays: ByteArray?) {
 }
 
 fun SecretKey.safeDestroy() {
-    if (this is Closeable) {
-        this.close()
-    } else {
-        try {
+    try {
+        if (this is Closeable) {
+            this.close()
+        } else {
             destroy()
-        } catch (ignored: Throwable) {
-            // NoSuchMethodError: No interface method destroy()V in class Ljavax/crypto/SecretKey; or its super classes (declaration of 'javax.crypto.SecretKey' appears in /system/framework/core-oj.jar)
         }
+    } catch (ignored: Throwable) {
+        // NoSuchMethodError: No interface method destroy()V in class Ljavax/crypto/SecretKey; or its super classes (declaration of 'javax.crypto.SecretKey' appears in /system/framework/core-oj.jar)
     }
 }
 
