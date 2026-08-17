@@ -13,6 +13,13 @@ data class ReturnResultEntity(
     val uri: Uri?
 ): Parcelable {
 
+    val isValid: Boolean
+        get() = if (uri == null) {
+            source != DeeplinkSource.Default
+        } else {
+            uri.toString() == "tonkeeper://publish"
+        }
+
     val name: String
         get() = uri?.host ?: "App"
 

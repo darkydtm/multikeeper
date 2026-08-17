@@ -31,6 +31,10 @@ data class SignRequestEntity(
     companion object {
 
         fun safe(uri: Uri, returnResult: ReturnResultEntity): SignRequestEntity? {
+            if (!returnResult.isValid) {
+                return null
+            }
+
             return try {
                 SignRequestEntity(uri, returnResult)
             } catch (e: Throwable) {
