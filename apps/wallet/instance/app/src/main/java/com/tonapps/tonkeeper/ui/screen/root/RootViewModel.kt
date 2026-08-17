@@ -701,8 +701,12 @@ class RootViewModel(
 
     fun signOut() {
         viewModelScope.launch {
-            gemRuntimeCoordinator.deleteAllWallets()
-            accountRepository.logout()
+            try {
+                gemRuntimeCoordinator.deleteAllWallets().getOrThrow()
+            } finally {
+                gemRuntimeCoordinator.stop()
+                accountRepository.logout()
+            }
         }
     }
 

@@ -488,6 +488,96 @@ class GemRuntimeCoordinatorTest {
 		assertTrue(registry.load().isEmpty())
 	}
 
+	@Test
+	fun `deletes wallet subscriptions without blocking local deletion`() = runBlocking {
+		val wallet = GemWallet(
+			walletId = WalletId("wallet"),
+			keystoreId = "keystore",
+			accounts = listOf(ChainAccount(WalletId("wallet"), Chain.Ethereum, "address")),
+		)
+		val registry = GemWalletRegistry(InMemoryRegistryStorage()).also { it.persist(wallet) }
+		val backend = BlockingSubscriptionBackend(
+			current = listOf(GemWalletSubscriptionChains("wallet", listOf("ethereum"))),
+		)
+		val coordinator = GemRuntimeCoordinator(
+			deviceRegistration = testDeviceRegistrationCoordinator(),
+			walletRegistry = registry,
+			keystoreDeleter = GemKeystoreDeleter { },
+			subscriptionRepository = GemSubscriptionRepository(backend),
+			webSocketClient = GemWebSocketClient(
+				client = OkHttpClient.Builder().build(),
+				signer = GemRequestSigner { _, _, _, _ -> "authorization" },
+			),
+		)
+
+		val deletion = async(start = CoroutineStart.UNDISPATCHED) { coordinator.deleteWallet(wallet) }
+
+		assertTrue(registry.load().isEmpty())
+		backend.getSubscriptionsStarted.await()
+		backend.release.complete(Unit)
+		assertTrue(deletion.await().isSuccess)
+		backend.deleted.await()
+		assertEquals(
+			listOf(GemWalletSubscriptionChains("wallet", listOf("ethereum"))),
+			backend.deletedSubscriptions,
+		)
+	}
+
+	@Test
+	fun `reports failed cleanup and retries after local deletion`() = runBlocking {
+		val wallet = GemWallet(
+			walletId = WalletId("wallet"),
+			keystoreId = "keystore",
+			accounts = listOf(ChainAccount(WalletId("wallet"), Chain.Ethereum, "address")),
+		)
+		val registry = GemWalletRegistry(InMemoryRegistryStorage()).also { it.persist(wallet) }
+		val backend = RetryableSubscriptionBackend()
+		val coordinator = GemRuntimeCoordinator(
+			deviceRegistration = testDeviceRegistrationCoordinator(),
+			walletRegistry = registry,
+			keystoreDeleter = GemKeystoreDeleter { },
+			subscriptionRepository = GemSubscriptionRepository(backend),
+			webSocketClient = GemWebSocketClient(
+				client = OkHttpClient.Builder().build(),
+				signer = GemRequestSigner { _, _, _, _ -> "authorization" },
+			),
+		)
+
+		assertTrue(coordinator.deleteAllWallets().isFailure)
+		assertTrue(registry.load().isEmpty())
+		assertTrue(coordinator.deleteAllWallets().isSuccess)
+		assertEquals(2, backend.getSubscriptionsCalls)
+		assertEquals(
+			listOf(GemWalletSubscriptionChains("wallet", listOf("ethereum"))),
+			backend.deletedSubscriptions,
+		)
+	}
+
+	@Test
+	fun `stops the live runtime`() = runBlocking {
+		val connected = CompletableDeferred<Unit>()
+		val stopped = CompletableDeferred<Unit>()
+		val coordinator = coordinator(
+			webSocketClient = GemWebSocketSource {
+				flow {
+					connected.complete(Unit)
+					try {
+						awaitCancellation()
+					} finally {
+						stopped.complete(Unit)
+					}
+				}
+			},
+		)
+
+		coordinator.start(this)
+		connected.await()
+		coordinator.stop()
+
+		stopped.await()
+		assertEquals(GemRuntimeState.Idle, coordinator.state.value)
+	}
+
 	private fun testDeviceRegistrationCoordinator(
 		registerDevice: suspend (GemDevice) -> Result<GemDevice?> = { device -> Result.success(device) },
 	) = GemDeviceRegistrationCoordinator(
@@ -528,6 +618,52 @@ class GemRuntimeCoordinatorTest {
 		),
 		refresh = refresh,
 	)
+}
+
+private class BlockingSubscriptionBackend(
+	private val current: List<GemWalletSubscriptionChains> = emptyList(),
+) : GemSubscriptionBackend {
+	val getSubscriptionsStarted = CompletableDeferred<Unit>()
+	val release = CompletableDeferred<Unit>()
+	val deleted = CompletableDeferred<Unit>()
+	var deletedSubscriptions = emptyList<GemWalletSubscriptionChains>()
+
+	override suspend fun getSubscriptions(): Result<List<GemWalletSubscriptionChains>?> {
+		getSubscriptionsStarted.complete(Unit)
+		release.await()
+		return Result.success(current)
+	}
+
+	override suspend fun addSubscriptions(subscriptions: List<GemWalletSubscription>): Result<Int> =
+		Result.success(subscriptions.size)
+
+	override suspend fun deleteSubscriptions(subscriptions: List<GemWalletSubscriptionChains>): Result<Int> {
+		deletedSubscriptions = subscriptions
+		deleted.complete(Unit)
+		return Result.success(subscriptions.size)
+	}
+}
+
+private class RetryableSubscriptionBackend : GemSubscriptionBackend {
+	var getSubscriptionsCalls = 0
+	var deletedSubscriptions = emptyList<GemWalletSubscriptionChains>()
+
+	override suspend fun getSubscriptions(): Result<List<GemWalletSubscriptionChains>?> {
+		getSubscriptionsCalls++
+		return if (getSubscriptionsCalls == 1) {
+			Result.failure(IOException("offline"))
+		} else {
+			Result.success(listOf(GemWalletSubscriptionChains("wallet", listOf("ethereum"))))
+		}
+	}
+
+	override suspend fun addSubscriptions(subscriptions: List<GemWalletSubscription>): Result<Int> =
+		Result.success(subscriptions.size)
+
+	override suspend fun deleteSubscriptions(subscriptions: List<GemWalletSubscriptionChains>): Result<Int> {
+		deletedSubscriptions = subscriptions
+		return Result.success(subscriptions.size)
+	}
 }
 
 private class InMemoryRegistryStorage : GemWalletRegistryStorage {

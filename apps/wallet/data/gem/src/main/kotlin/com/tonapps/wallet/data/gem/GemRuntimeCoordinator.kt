@@ -48,6 +48,7 @@ class GemRuntimeCoordinator(
 	private var nextStartupId = 0L
 	private var activeStartupId: Long? = null
 	private var activeStartupOwner: Job? = null
+	private var runtimeJob: Job? = null
 
 	val state: StateFlow<GemRuntimeState> = _state.asStateFlow()
 	val events: SharedFlow<GemWebSocketEvent> = _events.asSharedFlow()
@@ -70,18 +71,27 @@ class GemRuntimeCoordinator(
 		walletRegistry.persist(wallet)
 	}
 
-	suspend fun deleteWallet(wallet: GemWallet) = refreshLock.withLock {
+	suspend fun deleteWallet(wallet: GemWallet): Result<Unit> = refreshLock.withLock {
 		deleteWalletLocked(wallet.walletId, wallet.keystoreId)
+		val result = refreshSubscriptionsLocked()
+		if (walletRegistry.load().isEmpty()) stop()
+		result
 	}
 
-	suspend fun deleteWallet(walletId: String, keystoreId: String? = null) = refreshLock.withLock {
+	suspend fun deleteWallet(walletId: String, keystoreId: String? = null): Result<Unit> = refreshLock.withLock {
 		deleteWalletLocked(WalletId(walletId), keystoreId)
+		val result = refreshSubscriptionsLocked()
+		if (walletRegistry.load().isEmpty()) stop()
+		result
 	}
 
-	suspend fun deleteAllWallets() = refreshLock.withLock {
+	suspend fun deleteAllWallets(): Result<Unit> = refreshLock.withLock {
 		walletRegistry.load().forEach { wallet ->
 			deleteWalletLocked(wallet.walletId, wallet.keystoreId)
 		}
+		val result = refreshSubscriptionsLocked()
+		stop()
+		result
 	}
 
 	private fun deleteWalletLocked(walletId: WalletId, keystoreId: String?) {
@@ -102,6 +112,10 @@ class GemRuntimeCoordinator(
 	}
 
 	private suspend fun syncSubscriptions(): Result<Unit> = refreshLock.withLock {
+		refreshSubscriptionsLocked()
+	}
+
+	private suspend fun refreshSubscriptionsLocked(): Result<Unit> {
 		try {
 			val accounts = walletRegistry.load().flatMap { it.accounts }
 			val result = subscriptionRepository.sync(accounts)
@@ -142,7 +156,7 @@ class GemRuntimeCoordinator(
 							val subscriptions = syncSubscriptions()
 							if (subscriptions.isSuccess) {
 								if (!isCurrentStartup(startupId)) return@startup
-								launch(start = CoroutineStart.UNDISPATCHED) {
+								val websocketJob = launch(start = CoroutineStart.UNDISPATCHED) {
 									try {
 										webSocketClient.connect().collect { event ->
 											try {
@@ -159,6 +173,12 @@ class GemRuntimeCoordinator(
 									} catch (error: Throwable) {
 										setRunningIfCurrent(startupId, error.toDiagnosticError())
 									}
+									}
+								synchronized(startedMonitor) {
+									if (activeStartupId == startupId) runtimeJob = websocketJob
+								}
+								websocketJob.invokeOnCompletion { cause ->
+									if (cause is CancellationException) cancelStartup(startupId)
 								}
 								setRunningIfStarting(startupId)
 								return@startup
@@ -246,6 +266,17 @@ class GemRuntimeCoordinator(
 		}
 	}
 
+	fun stop() {
+		synchronized(startedMonitor) {
+			runtimeJob?.cancel()
+			runtimeJob = null
+			activeStartupId = null
+			activeStartupOwner = null
+			nextStartupId++
+			_state.value = GemRuntimeState.Idle
+		}
+	}
+
 	private fun updateStateAfterRefresh(
 		startupId: Long?,
 		startupGeneration: Long,
@@ -254,9 +285,11 @@ class GemRuntimeCoordinator(
 	) = synchronized(startedMonitor) {
 		if (
 			startupGeneration != nextStartupId ||
+			startupId == null ||
 			startupId != activeStartupId ||
 			_state.value is GemRuntimeState.Starting ||
-			(_state.value is GemRuntimeState.Failed && stateAtStart !is GemRuntimeState.Failed)
+			_state.value is GemRuntimeState.Failed ||
+			stateAtStart is GemRuntimeState.Failed
 		) {
 			return@synchronized
 		}
