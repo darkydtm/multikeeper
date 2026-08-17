@@ -2,11 +2,16 @@ package com.tonapps.wallet.data.gem
 
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -236,6 +241,162 @@ class GemRuntimeCoordinatorTest {
 	}
 
 	@Test
+	fun `retries startup after device registration failure`() = runBlocking {
+		var registrationCalls = 0
+		val coordinator = GemRuntimeCoordinator(
+			deviceRegistration = GemDeviceRegistrationCoordinator(
+				identity = object : GemDeviceIdentityProvider {
+					override fun getDeviceId(): String = "device"
+				},
+				backend = object : GemDeviceBackend {
+					override suspend fun getDevice(): Result<GemDevice?> = Result.success(null)
+					override suspend fun registerDevice(device: GemDevice): Result<GemDevice?> {
+						registrationCalls++
+						return if (registrationCalls == 1) {
+							Result.failure(IOException("offline"))
+						} else {
+							Result.success(device)
+						}
+					}
+					override suspend fun updateDevice(device: GemDevice): Result<GemDevice?> = Result.success(device)
+				},
+				metadata = GemDeviceMetadata(
+					platform = "android",
+					platformStore = "googlePlay",
+					os = "android",
+					model = "test",
+					token = "",
+					locale = "en",
+					version = "test",
+					currency = "USD",
+					isPushEnabled = false,
+					subscriptionsVersion = 1,
+				),
+			),
+			walletRegistry = GemWalletRegistry(InMemoryRegistryStorage()),
+			keystoreDeleter = GemKeystoreDeleter { },
+			subscriptionRepository = GemSubscriptionRepository(RefreshSubscriptionBackend(Result.success(null))),
+			webSocketClient = GemWebSocketClient(
+				client = OkHttpClient.Builder().build(),
+				signer = GemRequestSigner { _, _, _, _ -> "authorization" },
+			),
+		)
+		val scope = CoroutineScope(Job())
+
+		coordinator.start(scope)
+		assertTrue(coordinator.state.first { it is GemRuntimeState.Running } is GemRuntimeState.Running)
+		assertEquals(2, registrationCalls)
+
+		scope.cancel()
+	}
+
+	@Test
+	fun `bounds startup retries after repeated registration failures`() = runBlocking {
+		var registrationCalls = 0
+		val coordinator = coordinator(
+			deviceRegistration = testDeviceRegistrationCoordinator {
+				registrationCalls++
+				Result.failure(IOException("offline"))
+			},
+		)
+		val scope = CoroutineScope(Job())
+
+		coordinator.start(scope)
+
+		assertTrue(coordinator.state.first { it is GemRuntimeState.Failed } is GemRuntimeState.Failed)
+		assertEquals(3, registrationCalls)
+
+		val secondFailure = async(start = CoroutineStart.UNDISPATCHED) {
+			coordinator.state.drop(1).first { it is GemRuntimeState.Failed }
+		}
+		coordinator.start(scope)
+		assertTrue(secondFailure.await() is GemRuntimeState.Failed)
+		assertEquals(6, registrationCalls)
+
+		scope.cancel()
+	}
+
+	@Test
+	fun `allows startup again after the startup scope is cancelled`() = runBlocking {
+		var registrationCalls = 0
+		val firstRegistrationStarted = CompletableDeferred<Unit>()
+		val releaseFirstRegistration = CompletableDeferred<Unit>()
+		val coordinator = coordinator(
+			deviceRegistration = testDeviceRegistrationCoordinator { device ->
+				registrationCalls++
+				if (registrationCalls == 1) {
+					firstRegistrationStarted.complete(Unit)
+					releaseFirstRegistration.await()
+				}
+				Result.failure(IOException("offline"))
+			},
+		)
+		val firstJob = Job()
+		val firstScope = CoroutineScope(firstJob)
+
+		coordinator.start(firstScope)
+		firstRegistrationStarted.await()
+		firstScope.cancel()
+
+		val secondScope = CoroutineScope(Job())
+		coordinator.start(secondScope)
+		releaseFirstRegistration.complete(Unit)
+		firstJob.join()
+
+		assertTrue(coordinator.state.first { it is GemRuntimeState.Failed } is GemRuntimeState.Failed)
+		assertEquals(4, registrationCalls)
+
+		secondScope.cancel()
+	}
+
+	@Test
+	fun `does not report running while startup subscription sync is failing`() = runBlocking {
+		val coordinator = coordinator(
+			subscriptionBackend = RefreshSubscriptionBackend(Result.failure(IOException("offline"))),
+		)
+		val states = async(start = CoroutineStart.UNDISPATCHED) {
+			coordinator.state.takeWhile { state ->
+				state !is GemRuntimeState.Failed
+			}.toList()
+		}
+		val scope = CoroutineScope(Job())
+
+		coordinator.start(scope)
+
+		val observedStates = states.await()
+		assertTrue(observedStates.none { it is GemRuntimeState.Running })
+		assertTrue(coordinator.state.value is GemRuntimeState.Failed)
+		scope.cancel()
+	}
+
+	@Test
+	fun `refresh does not overwrite a failed startup`() = runBlocking {
+		val registrationsFinished = CompletableDeferred<Unit>()
+		var registrationCalls = 0
+		val backend = BlockingRefreshBackend()
+		val coordinator = coordinator(
+			deviceRegistration = testDeviceRegistrationCoordinator {
+				registrationCalls++
+				if (registrationCalls == 3) registrationsFinished.complete(Unit)
+				Result.failure(IOException("offline"))
+			},
+			subscriptionBackend = backend,
+		)
+		val scope = CoroutineScope(Job())
+
+		val refresh = async(start = CoroutineStart.UNDISPATCHED) { coordinator.refreshSubscriptions() }
+		backend.firstSyncStarted.await()
+		coordinator.start(scope)
+		registrationsFinished.await()
+		assertTrue(coordinator.state.first { it is GemRuntimeState.Failed } is GemRuntimeState.Failed)
+		backend.release.complete(Unit)
+
+		assertTrue(refresh.await().isSuccess)
+		assertTrue(coordinator.state.value is GemRuntimeState.Failed)
+		scope.cancel()
+	}
+
+	@Test
 	fun `refreshes subscriptions from the current registry and reports network errors`() = runBlocking {
 		val wallet = GemWallet(
 			walletId = WalletId("wallet"),
@@ -327,13 +488,15 @@ class GemRuntimeCoordinatorTest {
 		assertTrue(registry.load().isEmpty())
 	}
 
-	private fun testDeviceRegistrationCoordinator() = GemDeviceRegistrationCoordinator(
+	private fun testDeviceRegistrationCoordinator(
+		registerDevice: suspend (GemDevice) -> Result<GemDevice?> = { device -> Result.success(device) },
+	) = GemDeviceRegistrationCoordinator(
 		identity = object : GemDeviceIdentityProvider {
 			override fun getDeviceId(): String = "device"
 		},
 		backend = object : GemDeviceBackend {
 			override suspend fun getDevice(): Result<GemDevice?> = Result.success(null)
-			override suspend fun registerDevice(device: GemDevice): Result<GemDevice?> = Result.success(device)
+			override suspend fun registerDevice(device: GemDevice): Result<GemDevice?> = registerDevice(device)
 			override suspend fun updateDevice(device: GemDevice): Result<GemDevice?> = Result.success(device)
 		},
 		metadata = GemDeviceMetadata(
@@ -351,12 +514,14 @@ class GemRuntimeCoordinatorTest {
 	)
 
 	private fun coordinator(
+		deviceRegistration: GemDeviceRegistrationCoordinator = testDeviceRegistrationCoordinator(),
+		subscriptionBackend: GemSubscriptionBackend = RefreshSubscriptionBackend(Result.success(null)),
 		refresh: GemAuthoritativeRefresh = GemAuthoritativeRefresh { },
 	) = GemRuntimeCoordinator(
-		deviceRegistration = testDeviceRegistrationCoordinator(),
+		deviceRegistration = deviceRegistration,
 		walletRegistry = GemWalletRegistry(InMemoryRegistryStorage()),
 		keystoreDeleter = GemKeystoreDeleter { },
-		subscriptionRepository = GemSubscriptionRepository(RefreshSubscriptionBackend(Result.success(null))),
+		subscriptionRepository = GemSubscriptionRepository(subscriptionBackend),
 		webSocketClient = GemWebSocketClient(
 			client = OkHttpClient.Builder().build(),
 			signer = GemRequestSigner { _, _, _, _ -> "authorization" },

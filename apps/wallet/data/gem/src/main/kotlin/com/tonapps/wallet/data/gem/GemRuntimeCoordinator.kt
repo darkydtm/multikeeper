@@ -4,6 +4,9 @@ import java.io.IOException
 import java.util.LinkedHashMap
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.Flow
@@ -40,8 +43,11 @@ class GemRuntimeCoordinator(
 	private val _refreshEvents = MutableSharedFlow<SequencedRefreshEvent>(replay = 64, extraBufferCapacity = 64)
 	private val refreshLock = Mutex()
 	private val refreshEventLock = Mutex()
+	private val startedMonitor = Any()
 	private var refreshSequence = 0L
-	private var started = false
+	private var nextStartupId = 0L
+	private var activeStartupId: Long? = null
+	private var activeStartupOwner: Job? = null
 
 	val state: StateFlow<GemRuntimeState> = _state.asStateFlow()
 	val events: SharedFlow<GemWebSocketEvent> = _events.asSharedFlow()
@@ -86,64 +92,178 @@ class GemRuntimeCoordinator(
 		walletRegistry.delete(walletId)
 	}
 
-	suspend fun refreshSubscriptions(): Result<Unit> = refreshLock.withLock {
+	suspend fun refreshSubscriptions(): Result<Unit> {
+		val (startupId, startupGeneration, stateAtStart) = synchronized(startedMonitor) {
+			Triple(activeStartupId, nextStartupId, _state.value)
+		}
+		val result = syncSubscriptions()
+		updateStateAfterRefresh(startupId, startupGeneration, stateAtStart, result)
+		return result
+	}
+
+	private suspend fun syncSubscriptions(): Result<Unit> = refreshLock.withLock {
 		try {
 			val accounts = walletRegistry.load().flatMap { it.accounts }
 			val result = subscriptionRepository.sync(accounts)
 			if (result.isSuccess) {
-				_state.value = GemRuntimeState.Running()
 				Result.success(Unit)
 			} else {
-				_state.value = GemRuntimeState.Running(result.exceptionOrNull().toDiagnosticError())
 				Result.failure(result.exceptionOrNull() ?: IllegalStateException("Gem subscription sync failed"))
 			}
 		} catch (error: CancellationException) {
 			throw error
 		} catch (error: Throwable) {
-			_state.value = GemRuntimeState.Running(error.toDiagnosticError())
 			Result.failure(error)
 		}
 	}
 
-	@Synchronized
 	fun start(scope: CoroutineScope) {
-		if (started) return
-		started = true
-
-		scope.launch {
-			_state.value = GemRuntimeState.Starting
+		val startupId = synchronized(startedMonitor) {
+			if (activeStartupId != null) {
+				if (activeStartupOwner?.isCancelled != true) return
+				cancelStartup(activeStartupId!!)
+			}
+			nextStartupId++
+			activeStartupId = nextStartupId
+			activeStartupOwner = scope.coroutineContext[Job]
+			nextStartupId
+		}
+		scope.launch startup@{
 			try {
-				val registration = deviceRegistration.ensureRegistered()
-				if (registration.isFailure) {
-					_state.value = GemRuntimeState.Failed(registration.exceptionOrNull().toDiagnosticError())
-					return@launch
-				}
-
-				refreshSubscriptions()
-
-				launch {
+				var lastError: Throwable? = null
+				for (attempt in 0 until MAX_START_ATTEMPTS) {
+					if (!setStateIfCurrent(startupId, GemRuntimeState.Starting)) return@startup
 					try {
-						webSocketClient.connect().collect { event ->
-							try {
-								processEvent(event)
-							} catch (error: CancellationException) {
-								throw error
-							} catch (error: Throwable) {
-								_state.value = GemRuntimeState.Running(error.toDiagnosticError())
+						val registration = deviceRegistration.ensureRegistered()
+						if (registration.isFailure) {
+							lastError = registration.exceptionOrNull()
+						} else {
+							if (!isCurrentStartup(startupId)) return@startup
+							val subscriptions = syncSubscriptions()
+							if (subscriptions.isSuccess) {
+								if (!isCurrentStartup(startupId)) return@startup
+								launch(start = CoroutineStart.UNDISPATCHED) {
+									try {
+										webSocketClient.connect().collect { event ->
+											try {
+												processEvent(event)
+											} catch (error: CancellationException) {
+												throw error
+											} catch (error: Throwable) {
+												setRunningIfCurrent(startupId, error.toDiagnosticError())
+											}
+											_events.emit(event)
+										}
+									} catch (error: CancellationException) {
+										throw error
+									} catch (error: Throwable) {
+										setRunningIfCurrent(startupId, error.toDiagnosticError())
+									}
+								}
+								setRunningIfStarting(startupId)
+								return@startup
 							}
-							_events.emit(event)
+							lastError = subscriptions.exceptionOrNull()
 						}
 					} catch (error: CancellationException) {
 						throw error
 					} catch (error: Throwable) {
-						_state.value = GemRuntimeState.Running(error.toDiagnosticError())
+						lastError = error
+					}
+					if (attempt + 1 < MAX_START_ATTEMPTS) {
+						delay(STARTUP_RETRY_DELAY_MS)
 					}
 				}
+				failStartup(startupId, lastError.toDiagnosticError())
 			} catch (error: CancellationException) {
+				cancelStartup(startupId)
 				throw error
-			} catch (error: Throwable) {
-				_state.value = GemRuntimeState.Failed(error.toDiagnosticError())
+			} finally {
+				clearStartup(startupId)
 			}
+		}.also { job ->
+			job.invokeOnCompletion { cause ->
+				if (cause is CancellationException) {
+					cancelStartup(startupId)
+				} else {
+					clearStartup(startupId)
+				}
+			}
+		}
+	}
+
+	private fun isCurrentStartup(startupId: Long): Boolean = synchronized(startedMonitor) {
+		activeStartupId == startupId
+	}
+
+	private fun setStateIfCurrent(startupId: Long, state: GemRuntimeState): Boolean = synchronized(startedMonitor) {
+		if (activeStartupId != startupId) {
+			false
+		} else {
+			_state.value = state
+			true
+		}
+	}
+
+	private fun setRunningIfCurrent(startupId: Long, error: GemError) {
+		setStateIfCurrent(startupId, GemRuntimeState.Running(error))
+	}
+
+	private fun setRunningIfStarting(startupId: Long) = synchronized(startedMonitor) {
+		if (activeStartupId == startupId && _state.value is GemRuntimeState.Starting) {
+			_state.value = GemRuntimeState.Running()
+		}
+	}
+
+	private fun failStartup(startupId: Long, error: GemError) {
+		synchronized(startedMonitor) {
+			if (activeStartupId == startupId) {
+				activeStartupId = null
+				activeStartupOwner = null
+				_state.value = GemRuntimeState.Failed(error)
+			}
+		}
+	}
+
+	private fun cancelStartup(startupId: Long) {
+		synchronized(startedMonitor) {
+			if (activeStartupId == startupId) {
+				activeStartupId = null
+				activeStartupOwner = null
+				if (_state.value is GemRuntimeState.Starting) {
+					_state.value = GemRuntimeState.Idle
+				}
+			}
+		}
+	}
+
+	private fun clearStartup(startupId: Long) {
+		synchronized(startedMonitor) {
+			if (activeStartupId == startupId) {
+				activeStartupId = null
+				activeStartupOwner = null
+			}
+		}
+	}
+
+	private fun updateStateAfterRefresh(
+		startupId: Long?,
+		startupGeneration: Long,
+		stateAtStart: GemRuntimeState,
+		result: Result<Unit>,
+	) = synchronized(startedMonitor) {
+		if (
+			startupGeneration != nextStartupId ||
+			startupId != activeStartupId ||
+			_state.value is GemRuntimeState.Starting ||
+			(_state.value is GemRuntimeState.Failed && stateAtStart !is GemRuntimeState.Failed)
+		) {
+			return@synchronized
+		}
+		_state.value = if (result.isSuccess) {
+			GemRuntimeState.Running()
+		} else {
+			GemRuntimeState.Running(result.exceptionOrNull().toDiagnosticError())
 		}
 	}
 
@@ -183,6 +303,11 @@ class GemRuntimeCoordinator(
 
 	private suspend fun emitRefreshEvent(event: GemRefreshEvent) = refreshEventLock.withLock {
 		_refreshEvents.emit(SequencedRefreshEvent(++refreshSequence, event))
+	}
+
+	private companion object {
+		const val MAX_START_ATTEMPTS = 3
+		const val STARTUP_RETRY_DELAY_MS = 1_000L
 	}
 }
 
