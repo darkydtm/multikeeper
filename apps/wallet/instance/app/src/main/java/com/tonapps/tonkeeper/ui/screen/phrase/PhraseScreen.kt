@@ -13,7 +13,6 @@ import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.widget.AppCompatTextView
 import androidx.lifecycle.lifecycleScope
-import com.tonapps.tonkeeper.extensions.copyToClipboard
 import com.tonapps.tonkeeper.koin.accountRepository
 import com.tonapps.tonkeeper.koin.settingsRepository
 import com.tonapps.tonkeeper.ui.base.BaseWalletVM
@@ -45,7 +44,6 @@ class PhraseScreen(wallet: WalletEntity): WalletContextScreen(R.layout.fragment_
     private lateinit var textHeaderView: TextHeaderView
     private lateinit var tronWarningView: AppCompatTextView
     private lateinit var wordsView: PhraseWords
-    private lateinit var copyButton: Button
     private lateinit var tronButton: Button
     private lateinit var checkButton: Button
 
@@ -86,11 +84,6 @@ class PhraseScreen(wallet: WalletEntity): WalletContextScreen(R.layout.fragment_
             textHeaderView.descriptionView.visibility = View.GONE
         }
 
-        copyButton = view.findViewById(R.id.copy)
-        copyButton.setHapticClickListener {
-            requireContext().copyToClipboard(args.words.joinToString(" "), true)
-        }
-
         tronButton = view.findViewById(R.id.tron)
         tronButton.setHapticClickListener {
             lifecycleScope.launch {
@@ -107,8 +100,6 @@ class PhraseScreen(wallet: WalletEntity): WalletContextScreen(R.layout.fragment_
 
         if (args.backup) {
             checkButton.visibility = View.VISIBLE
-        } else {
-            copyButton.visibility = View.VISIBLE
         }
 
         val tronUsdtEnabled = context?.settingsRepository?.getTronUsdtEnabled(wallet.id) ?: false
