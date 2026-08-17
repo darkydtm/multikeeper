@@ -103,9 +103,13 @@ class GemSendCoordinatorTest {
 
 		val result = GemSendCoordinator(source, pollDelayMillis = 0).submitOutcome(preloaded())
 
-		val failed = result as GemSendOutcome.Failed
-		assertEquals(GemError.BroadcastFailed("Gem transaction was rejected"), (failed.error as WalletDataSourceException).error)
-		assertEquals(broadcasted, failed.transaction)
+		assertEquals(
+			GemSendOutcome.Reverted(
+				broadcasted,
+				GemError.BroadcastFailed("Gem transaction was reverted"),
+			),
+			result,
+		)
 	}
 
 	@Test
@@ -122,7 +126,7 @@ class GemSendCoordinatorTest {
 		val submitted = coordinator.submitOutcome(preloaded())
 		val confirmed = coordinator.waitForOutcome(partial)
 
-		assertEquals(GemSendOutcome.Submitted(partial, broadcastError), submitted)
+		assertEquals(GemSendOutcome.Confirmed(partial), submitted)
 		assertEquals(GemSendOutcome.Confirmed(partial), confirmed)
 		assertEquals(1, source.broadcastCalls)
 	}
@@ -130,10 +134,10 @@ class GemSendCoordinatorTest {
 	@Test
 	fun `retries only unsubmitted payloads and retains accepted ids`() = runBlocking {
 		val partial = BroadcastedTransaction(
-			WalletId("wallet"),
-			Chain.Ethereum,
-			listOf("tx-1"),
-			listOf("signed-2"),
+			walletId = WalletId("wallet"),
+			chain = Chain.Ethereum,
+			transactionIds = listOf("tx-1"),
+			unsubmittedPayloads = listOf("signed-2"),
 		)
 		val source = FakeGemWalletDataSource(
 			broadcasted = BroadcastedTransaction(WalletId("wallet"), Chain.Ethereum, listOf("tx-2")),
@@ -177,6 +181,69 @@ class GemSendCoordinatorTest {
 		val result = GemSendCoordinator(source, pollDelayMillis = 0).submitAndWait(preloaded())
 
 		assertSame(error, result.exceptionOrNull())
+	}
+
+	@Test
+	fun `marks a rejected transaction as terminal`() = runBlocking {
+		val broadcasted = BroadcastedTransaction(WalletId("wallet"), Chain.Ethereum, listOf("tx"))
+		val source = FakeGemWalletDataSource(
+			broadcasted = broadcasted,
+			statuses = ArrayDeque(listOf(TransactionState.Failed)),
+		)
+
+		val result = GemSendCoordinator(source, pollDelayMillis = 0).submitOutcome(preloaded())
+
+		assertEquals(
+			GemSendOutcome.Failed(
+				broadcasted,
+				GemError.BroadcastFailed("Gem transaction was rejected"),
+				terminal = true,
+			),
+			result,
+		)
+	}
+
+	@Test
+	fun `retries only unsubmitted payloads and confirms all payloads`() = runBlocking {
+		val partial = BroadcastedTransaction(
+			walletId = WalletId("wallet"),
+			chain = Chain.Ethereum,
+			transactionIds = listOf("tx-1"),
+			unsubmittedPayloads = listOf("signed-2"),
+		)
+		val source = FakeGemWalletDataSource(
+			broadcasted = BroadcastedTransaction(WalletId("wallet"), Chain.Ethereum, listOf("tx-2")),
+			statuses = ArrayDeque(listOf(TransactionState.Confirmed, TransactionState.Confirmed)),
+		)
+
+		val result = GemSendCoordinator(source, pollDelayMillis = 0).submitOutcome(preloaded(), partial)
+
+		assertEquals(
+			GemSendOutcome.Confirmed(
+				BroadcastedTransaction(WalletId("wallet"), Chain.Ethereum, listOf("tx-1", "tx-2")),
+			),
+			result,
+		)
+		assertEquals(listOf("signed-2"), source.broadcastPayloads)
+	}
+
+	@Test
+	fun `keeps the original error when no transaction was accepted`() = runBlocking {
+		val error = WalletDataSourceException(GemError.AuthenticationRequired)
+		val partial = BroadcastedTransaction(
+			walletId = WalletId("wallet"),
+			chain = Chain.Ethereum,
+			transactionIds = emptyList(),
+			unsubmittedPayloads = listOf("signed-1", "signed-2"),
+		)
+		val source = FakeGemWalletDataSource(
+			broadcasted = partial,
+			broadcastFailure = WalletDataSourceException(error.error, partial),
+		)
+
+		val result = GemSendCoordinator(source, pollDelayMillis = 0).submitOutcome(preloaded())
+
+		assertEquals(GemSendOutcome.Failed(partial, error.error), result)
 	}
 
 	private fun preloaded() = PreloadedTransaction(

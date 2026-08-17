@@ -76,7 +76,10 @@ data class BroadcastedTransaction(
 	val chain: Chain,
 	val transactionIds: List<String>,
 	val unsubmittedPayloads: List<String> = emptyList(),
-)
+) {
+	val payloadCount: Int
+		get() = transactionIds.size + unsubmittedPayloads.size
+}
 
 data class TransactionStatus(
 	val walletId: WalletId,

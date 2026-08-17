@@ -185,6 +185,7 @@ class GemstoneTransactionBridgeTest {
 
 		val error = result.exceptionOrNull() as WalletDataSourceException
 		assertEquals(listOf("hash-signed-1"), error.partialBroadcast?.transactionIds)
+		assertEquals(2, error.partialBroadcast?.payloadCount)
 		assertEquals(listOf("signed-2"), error.partialBroadcast?.unsubmittedPayloads)
 	}
 

@@ -1783,9 +1783,33 @@ class SendViewModel(
                     outcome.transaction,
                 )
             }
+            is GemSendOutcome.TimedOut -> {
+                gemBroadcastedTransaction = outcome.transaction
+                throw WalletDataSourceException(GemError.StatusUnknown, partialBroadcast = outcome.transaction)
+            }
+            is GemSendOutcome.Unknown -> {
+                gemBroadcastedTransaction = outcome.transaction
+                throw WalletDataSourceException(
+                    outcome.error,
+                    partialBroadcast = outcome.transaction,
+                    cause = outcome.cause,
+                )
+            }
             is GemSendOutcome.Failed -> {
-                outcome.transaction?.let { gemBroadcastedTransaction = it }
-                throw outcome.error
+                gemBroadcastedTransaction = outcome.transaction?.takeIf {
+                    !outcome.terminal && it.unsubmittedPayloads.isNotEmpty()
+                }
+                throw WalletDataSourceException(
+                    outcome.error,
+                    partialBroadcast = outcome.transaction,
+                )
+            }
+            is GemSendOutcome.Reverted -> {
+                gemBroadcastedTransaction = null
+                throw WalletDataSourceException(
+                    outcome.error,
+                    partialBroadcast = outcome.transaction,
+                )
             }
         }
     }

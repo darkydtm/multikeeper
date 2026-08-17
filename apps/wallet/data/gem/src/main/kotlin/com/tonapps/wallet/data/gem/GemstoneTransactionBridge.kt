@@ -371,7 +371,7 @@ class GemstoneTransactionBridge(
 					).takeIf { it.transactionIds.isNotEmpty() },
 					cause = error,
 				)
-			}
+		}
 		}
 		BroadcastedTransaction(transaction.walletId, transaction.chain, transactionIds)
 	}
@@ -439,6 +439,25 @@ class GemstoneTransactionBridge(
 	}
 }
 
+private fun SignedTransaction.partialBroadcast(transactionIds: List<String>) =
+	BroadcastedTransaction(walletId, chain, transactionIds, payloads.drop(transactionIds.size))
+
+private fun WalletDataSourceException.withPartialBroadcast(
+	transaction: SignedTransaction,
+	transactionIds: List<String>,
+) = WalletDataSourceException(
+	error = error,
+	cause = cause ?: this,
+	partialBroadcast = transaction.partialBroadcast(
+		transactionIds.ifEmpty { partialBroadcast?.transactionIds.orEmpty() },
+	),
+)
+
+private fun Throwable.toWalletDataSourceException(fallback: GemError): WalletDataSourceException = when (this) {
+	is WalletDataSourceException -> this
+	is GemBackendException -> WalletDataSourceException(gemError, cause = this)
+	else -> WalletDataSourceException(fallback, cause = this)
+}
 data class GemTransactionStatusRequest(
 	val walletId: WalletId,
 	val chain: Chain,
