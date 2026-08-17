@@ -1,5 +1,6 @@
 package com.tonapps.network.interceptor
 
+import com.tonapps.network.HttpsOrigin
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import okhttp3.Call
@@ -14,6 +15,31 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class AuthorizationInterceptorTest {
+
+	@Test
+	fun `matches only HTTPS origins on the default port`() {
+		assertEquals(
+			true,
+			HttpsOrigin.matches(
+				Request.Builder().url("https://api.example.com").build().url,
+				listOf("https://api.example.com"),
+			),
+		)
+		assertEquals(
+			true,
+			HttpsOrigin.matches(
+				Request.Builder().url("https://api.example.com:443").build().url,
+				listOf("https://api.example.com"),
+			),
+		)
+		assertEquals(
+			false,
+			HttpsOrigin.matches(
+				Request.Builder().url("https://api.example.com:8443").build().url,
+				listOf("https://api.example.com"),
+			),
+		)
+	}
 
 	@Test
 	fun `adds bearer token only to allowed domains`() {
@@ -74,6 +100,34 @@ class AuthorizationInterceptorTest {
 		)
 		interceptor.intercept(httpChain)
 		assertNull(httpChain.proceededRequest?.header("Authorization"))
+	}
+
+	@Test
+	fun `does not attach credentials to a trusted host alternate port`() {
+		val chain = RecordingChain(
+			Request.Builder().url("https://api.example.com:8443").build(),
+		)
+
+		AuthorizationInterceptor.bearer(
+			token = { "secret" },
+			allowDomains = { listOf("https://api.example.com") },
+		).intercept(chain)
+
+		assertNull(chain.proceededRequest?.header("Authorization"))
+	}
+
+	@Test
+	fun `attaches credentials to a trusted host on the standard HTTPS port`() {
+		val chain = RecordingChain(
+			Request.Builder().url("https://api.example.com:443").build(),
+		)
+
+		AuthorizationInterceptor.bearer(
+			token = { "secret" },
+			allowDomains = { listOf("https://api.example.com") },
+		).intercept(chain)
+
+		assertEquals("Bearer secret", chain.proceededRequest?.header("Authorization"))
 	}
 
 	@Test

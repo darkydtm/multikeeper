@@ -1,9 +1,9 @@
 package com.tonapps.network.interceptor
 
+import com.tonapps.network.HttpsOrigin
 import java.io.IOException
 import okhttp3.Interceptor
 import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Response
 
 class AuthorizationInterceptor(
@@ -18,11 +18,9 @@ class AuthorizationInterceptor(
         BEARER
     }
 
-    private val domains: Set<String>
+    private val origins: Set<HttpsOrigin>
         get() = allowDomains()
-            .mapNotNull { it.toHttpUrlOrNull() }
-            .filter { it.isHttps }
-            .map { it.host }
+            .mapNotNull(HttpsOrigin::parse)
             .toSet()
 
     private val headerValue: String?
@@ -40,8 +38,8 @@ class AuthorizationInterceptor(
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
-        val trustedDomains = domains
-        val authorization = if (isTrustedHttps(original.url, trustedDomains)) {
+        val trustedOrigins = origins
+        val authorization = if (isTrustedHttps(original.url, trustedOrigins)) {
             headerValue
         } else {
             null
@@ -60,7 +58,7 @@ class AuthorizationInterceptor(
         if (authorization != null && response.isRedirect) {
             val location = response.header("Location")
             val redirectedUrl = location?.let { response.request.url.resolve(it) }
-            if (redirectedUrl != null && !isTrustedHttps(redirectedUrl, trustedDomains)) {
+            if (redirectedUrl != null && !isTrustedHttps(redirectedUrl, trustedOrigins)) {
                 response.close()
                 throw IOException("Refusing to redirect an authorized request to an untrusted URL")
             }
@@ -69,8 +67,8 @@ class AuthorizationInterceptor(
         return response
     }
 
-    private fun isTrustedHttps(url: HttpUrl, trustedDomains: Set<String>): Boolean {
-        return url.isHttps && trustedDomains.contains(url.host)
+    private fun isTrustedHttps(url: HttpUrl, trustedOrigins: Set<HttpsOrigin>): Boolean {
+        return trustedOrigins.any { it.matches(url) }
     }
 
     companion object {
