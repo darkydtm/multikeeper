@@ -101,7 +101,7 @@ fun OkHttpClient.sseFactory() = EventSources.createFactory(this)
  * Provides atomic close semantics and comprehensive error handling.
  */
 private class FlowEventListener(
-    private val url: String,
+	private val url: String,
     private val scope: ProducerScope<SSEvent>,
 ) : EventSourceListener() {
 
@@ -124,12 +124,12 @@ private class FlowEventListener(
 
             // Atomic close to prevent race with onFailure/onClosed
             if (isClosed.compareAndSet(false, true)) {
-                try {
-                    eventSource.cancel()
-                    scope.close(IOException("SSE downstream not ready / buffer full"))
-                } catch (e: Exception) {
-                    L.e(e, "Error closing SSE on overflow")
-                }
+				try {
+					eventSource.cancel()
+					scope.close(IOException("SSE downstream not ready / buffer full"))
+				} catch (e: Exception) {
+					L.e("Error closing SSE on overflow: ${e::class.java.name}")
+				}
             }
         }
     }
@@ -148,8 +148,8 @@ private class FlowEventListener(
             }
 
             t != null -> {
-                L.w("SSE failure: ${t.message}, url=$url")
-                t
+				L.w("SSE failure: ${t::class.java.name}, url=$url")
+				t
             }
 
             else -> {
@@ -163,7 +163,7 @@ private class FlowEventListener(
             try {
                 scope.close(error)
             } catch (e: Exception) {
-                L.e(e, "Error closing SSE on failure")
+				L.e("Error closing SSE on failure: ${e::class.java.name}")
             }
         }
     }
@@ -180,7 +180,7 @@ private class FlowEventListener(
             try {
                 scope.close()
             } catch (e: Exception) {
-                L.e(e, "Error on SSE graceful close")
+				L.e("Error on SSE graceful close: ${e::class.java.name}")
             }
         }
     }
@@ -216,8 +216,8 @@ fun OkHttpClient.sse(
     lastEventId: Long? = null,
     onFailure: ((Throwable) -> Unit)?
 ): Flow<SSEvent> = callbackFlow {
-    // Create dedicated listener with access to this Flow scope
-    val listener = FlowEventListener(url, this)
+	val safeUrl = redactUrl(url)
+	val listener = FlowEventListener(safeUrl, this)
 
     try {
         val builder = requestBuilder(url)
@@ -233,18 +233,18 @@ fun OkHttpClient.sse(
         val request = builder.build()
         val events = sseFactory().newEventSource(request, listener)
 
-        L.d("SSE connection started, url=$url")
+		L.d("SSE connection started, url=$safeUrl")
 
         awaitClose {
-            L.d("SSE awaitClose triggered, url=$url")
+			L.d("SSE awaitClose triggered, url=$safeUrl")
             try {
                 events.cancel()
             } catch (e: Exception) {
-                L.e(e, "Error canceling SSE")
+				L.e("Error canceling SSE: ${e::class.java.name}")
             }
         }
     } catch (e: Exception) {
-        L.e(e, "Error starting SSE connection")
+		L.e("Error starting SSE connection: ${e::class.java.name}")
         throw e
     }
 }
@@ -277,14 +277,14 @@ fun OkHttpClient.sse(
 
             // OOM is terminal - don't retry
             cause is OutOfMemoryError -> {
-                L.e(cause, "SSE OutOfMemoryError, not retrying")
+				L.e("SSE OutOfMemoryError, not retrying: ${cause::class.java.name}")
                 false
             }
 
             // Recoverable error - retry with exponential backoff
             else -> {
                 val delayMs = minOf(BACKOFF_TIME_MIN_MS * (attempt + 1), BACKOFF_TIME_MAX_MS)
-                L.w("SSE error (attempt ${attempt + 1}/${MAX_RETIES}), retrying in ${delayMs}ms: ${cause.message}")
+				L.w("SSE error (attempt ${attempt + 1}/${MAX_RETIES}), retrying in ${delayMs}ms: ${cause::class.java.name}")
                 onFailure?.invoke(cause)
                 delay(delayMs)
                 true
@@ -295,7 +295,7 @@ fun OkHttpClient.sse(
     }
     // Last line of defense: catch any unhandled errors to prevent app crash
     .catch { e ->
-        L.e(e, "Unhandled SSE error - preventing crash")
+		L.e("Unhandled SSE error - preventing crash: ${e::class.java.name}")
         onFailure?.invoke(e)
         // Don't rethrow - gracefully terminate the flow instead of crashing
     }
@@ -312,7 +312,8 @@ fun OkHttpClient.ssePost(
     headers: Map<String, String>? = null,
     onFailure: ((Throwable) -> Unit)?
 ): Flow<SSEvent> = callbackFlow {
-    val listener = FlowEventListener(url, this)
+	val safeUrl = redactUrl(url)
+	val listener = FlowEventListener(safeUrl, this)
 
     try {
         val body = jsonBody.toRequestBody("application/json".toMediaType())
@@ -327,18 +328,18 @@ fun OkHttpClient.ssePost(
         val request = builder.build()
         val events = sseFactory().newEventSource(request, listener)
 
-        L.d("SSE POST connection started, url=$url")
+		L.d("SSE POST connection started, url=$safeUrl")
 
         awaitClose {
-            L.d("SSE POST awaitClose triggered, url=$url")
+			L.d("SSE POST awaitClose triggered, url=$safeUrl")
             try {
                 events.cancel()
             } catch (e: Exception) {
-                L.e(e, "Error canceling SSE POST")
+				L.e("Error canceling SSE POST: ${e::class.java.name}")
             }
         }
     } catch (e: Exception) {
-        L.e(e, "Error starting SSE POST connection")
+		L.e("Error starting SSE POST connection: ${e::class.java.name}")
         throw e
     }
 }
@@ -351,7 +352,7 @@ fun OkHttpClient.ssePost(
             cause is OutOfMemoryError -> false
             else -> {
                 val delayMs = minOf(BACKOFF_TIME_MIN_MS * (attempt + 1), BACKOFF_TIME_MAX_MS)
-                L.w("SSE POST error (attempt ${attempt + 1}), retrying in ${delayMs}ms: ${cause.message}")
+				L.w("SSE POST error (attempt ${attempt + 1}), retrying in ${delayMs}ms: ${cause::class.java.name}")
                 onFailure?.invoke(cause)
                 delay(delayMs)
                 true
@@ -360,8 +361,7 @@ fun OkHttpClient.ssePost(
         shouldRetry
     }
     .catch { e ->
-        L.e(e, "Unhandled SSE POST error")
+		L.e("Unhandled SSE POST error: ${e::class.java.name}")
         onFailure?.invoke(e)
     }
     .cancellable()
-

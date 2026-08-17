@@ -2,6 +2,7 @@ package com.tonapps.network.interceptor
 
 import android.os.SystemClock
 import com.tonapps.log.L
+import com.tonapps.network.redactUrl
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -148,21 +149,6 @@ class LoggingInterceptor(
             }
         }
     }
-}
-
-internal fun redactUrl(url: HttpUrl): String {
-    val builder = url.newBuilder()
-        .username("")
-        .password("")
-        .fragment(null)
-
-    url.queryParameterNames.forEach { name ->
-        val values = url.queryParameterValues(name)
-        builder.removeAllQueryParameters(name)
-        values.forEach { builder.addQueryParameter(name, "<redacted>") }
-    }
-
-    return builder.build().toString()
 }
 
 internal fun isSensitiveHeader(header: String): Boolean {
