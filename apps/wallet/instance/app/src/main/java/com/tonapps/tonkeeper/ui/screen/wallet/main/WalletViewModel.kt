@@ -86,6 +86,7 @@ class WalletViewModel(
         get() = settingsRepository.installId
 
     private var autoRefreshJob: Job? = null
+    private val walletLifecycleGeneration = accountRepository.walletLifecycleGeneration.value
     private val gemRefreshChains = mutableMapOf<GemChain, Long>()
     private val gemRefreshLock = Mutex()
     private var gemRefreshGeneration = 0L
@@ -244,7 +245,8 @@ class WalletViewModel(
                     wallet,
                     walletCurrency,
                     true,
-                    state.totalBalanceFiat
+                    state.totalBalanceFiat,
+                    walletLifecycleGeneration,
                 )
                 _stateMainFlow.value = state
             }
@@ -280,7 +282,8 @@ class WalletViewModel(
                             wallet,
                             walletCurrency,
                             true,
-                            state.totalBalanceFiat
+                            state.totalBalanceFiat,
+                            walletLifecycleGeneration,
                         )
                         settingsRepository.setWalletLastUpdated(wallet.id)
                         setStatus(Status.Default)

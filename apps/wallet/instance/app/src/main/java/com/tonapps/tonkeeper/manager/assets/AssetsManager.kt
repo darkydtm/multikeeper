@@ -57,9 +57,18 @@ class AssetsManager(
 
     private val cache = TotalBalanceCache(context)
 	private val gemAssetsCache = ConcurrentHashMap<GemAssetsCacheKey, Map<GemChain, List<AssetsEntity>>>()
-    private val gemAssetsCacheLock = Mutex()
+	private val gemAssetsCacheLock = Mutex()
+	private var gemAssetsCacheGeneration = accountRepository.walletLifecycleGeneration.value
+	private var totalBalanceCacheGeneration = accountRepository.walletLifecycleGeneration.value
 
     init {
+        accountRepository.walletLifecycleGeneration.drop(1).onEach { generation ->
+            synchronized(accountRepository) {
+                cache.clearAll()
+                totalBalanceCacheGeneration = generation
+            }
+        }.launchIn(scope)
+
         settingsRepository.tokenPrefsChangedFlow.drop(1).onEach {
             accountRepository.getSelectedWallet()?.let {
                 cache.clear(it, settingsRepository.currency)
@@ -295,7 +304,10 @@ class AssetsManager(
         wallet: WalletEntity,
         currency: WalletCurrency,
         sorted: Boolean = false,
-    ) = cache.get(wallet, currency, sorted)
+    ) = synchronized(accountRepository) {
+        clearStaleTotalBalanceCache()
+        cache.get(wallet, currency, sorted)
+    }
 
     suspend fun requestTotalBalance(
         wallet: WalletEntity,
@@ -303,21 +315,43 @@ class AssetsManager(
         refresh: Boolean = false,
         sorted: Boolean = false,
     ): Coins? {
+        val lifecycleGeneration = synchronized(accountRepository) {
+            clearStaleTotalBalanceCache()
+            accountRepository.walletLifecycleGeneration.value
+        }
         val totalBalance = calculateTotalBalance(wallet, currency, refresh, sorted) ?: return null
-        cache.set(wallet, currency, sorted, totalBalance)
-        return totalBalance
+        return synchronized(accountRepository) {
+            if (lifecycleGeneration != accountRepository.walletLifecycleGeneration.value) {
+                clearStaleTotalBalanceCache()
+                null
+            } else {
+                cache.set(wallet, currency, sorted, totalBalance)
+                totalBalance
+            }
+        }
     }
 
     fun setCachedTotalBalance(
-        wallet: WalletEntity, currency: WalletCurrency, sorted: Boolean = false, value: Coins
+        wallet: WalletEntity,
+        currency: WalletCurrency,
+        sorted: Boolean = false,
+        value: Coins,
+        lifecycleGeneration: Long,
     ) {
-        cache.set(wallet, currency, sorted, value)
+        synchronized(accountRepository) {
+            clearStaleTotalBalanceCache()
+            if (lifecycleGeneration == accountRepository.walletLifecycleGeneration.value) {
+                cache.set(wallet, currency, sorted, value)
+            }
+        }
     }
 
     suspend fun getTotalBalance(
         wallet: WalletEntity, currency: WalletCurrency, sorted: Boolean = false
     ) = getCachedTotalBalance(wallet, currency, sorted) ?: requestTotalBalance(
-        wallet, currency, sorted
+        wallet = wallet,
+        currency = currency,
+        sorted = sorted,
     )
 
     private suspend fun calculateTotalBalance(
@@ -338,6 +372,14 @@ class AssetsManager(
         currency: WalletCurrency
     ): Coins? {
         return getTotalBalance(wallet, currency, false)
+    }
+
+    private fun clearStaleTotalBalanceCache() {
+        val generation = accountRepository.walletLifecycleGeneration.value
+        if (totalBalanceCacheGeneration != generation) {
+            cache.clearAll()
+            totalBalanceCacheGeneration = generation
+        }
     }
 }
 
