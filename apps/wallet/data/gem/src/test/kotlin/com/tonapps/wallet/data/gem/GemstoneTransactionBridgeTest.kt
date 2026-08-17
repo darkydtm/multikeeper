@@ -1,6 +1,7 @@
 package com.tonapps.wallet.data.gem
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.gemstone.BroadcastOptions
@@ -158,6 +159,85 @@ class GemstoneTransactionBridgeTest {
 
 		assertEquals(payloads, sent)
 		assertEquals(listOf("hash-signed-1", "hash-signed-2"), result.transactionIds)
+	}
+
+	@Test
+	fun `broadcast preserves submitted ids when a later payload fails`() {
+		val bridge = GemstoneTransactionBridge(
+			gatewayFactory = GemGatewayFactory { object : GemGatewayApi {
+				override suspend fun getTransactionPreload(chain: String, input: GemTransactionPreloadInput): GemTransactionLoadMetadata = error("unused")
+				override suspend fun getFeeRates(chain: String, input: GemTransactionInputType): List<GemFeeRate> = error("unused")
+				override suspend fun getTransactionLoad(chain: String, input: GemTransactionLoadInput): GemTransactionData = error("unused")
+				override suspend fun transactionBroadcast(chain: String, data: String, options: BroadcastOptions): String = when (data) {
+					"signed-1" -> "hash-signed-1"
+					else -> error("broadcast failed")
+				}
+				override suspend fun getTransactionStatus(chain: String, request: GemTransactionStateRequest): TransactionUpdate = error("unused")
+			} },
+			keystoreFactory = GemKeystoreFactory { error("unused") },
+			passwordProvider = GemPasswordProvider { ByteArray(32) },
+			draftAdapter = FailClosedGemTransactionDraftAdapter(),
+		)
+
+		val result = kotlinx.coroutines.runBlocking {
+			bridge.broadcastTransaction(SignedTransaction(WalletId("wallet"), Chain.Ethereum, listOf("signed-1", "signed-2")))
+		}
+
+		val error = result.exceptionOrNull() as WalletDataSourceException
+		assertEquals(listOf("hash-signed-1"), error.partialBroadcast?.transactionIds)
+		assertEquals(listOf("signed-2"), error.partialBroadcast?.unsubmittedPayloads)
+	}
+
+	@Test
+	fun `broadcast preserves a domain error after an earlier payload was accepted`() {
+		val domainError = WalletDataSourceException(GemError.BackendRejected("rejected"))
+		val bridge = GemstoneTransactionBridge(
+			gatewayFactory = GemGatewayFactory { object : GemGatewayApi {
+				override suspend fun getTransactionPreload(chain: String, input: GemTransactionPreloadInput): GemTransactionLoadMetadata = error("unused")
+				override suspend fun getFeeRates(chain: String, input: GemTransactionInputType): List<GemFeeRate> = error("unused")
+				override suspend fun getTransactionLoad(chain: String, input: GemTransactionLoadInput): GemTransactionData = error("unused")
+				override suspend fun transactionBroadcast(chain: String, data: String, options: BroadcastOptions): String = when (data) {
+					"signed-1" -> "hash-signed-1"
+					else -> throw domainError
+				}
+				override suspend fun getTransactionStatus(chain: String, request: GemTransactionStateRequest): TransactionUpdate = error("unused")
+			} },
+			keystoreFactory = GemKeystoreFactory { error("unused") },
+			passwordProvider = GemPasswordProvider { ByteArray(32) },
+			draftAdapter = FailClosedGemTransactionDraftAdapter(),
+		)
+
+		val result = kotlinx.coroutines.runBlocking {
+			bridge.broadcastTransaction(SignedTransaction(WalletId("wallet"), Chain.Ethereum, listOf("signed-1", "signed-2")))
+		}
+
+		val error = result.exceptionOrNull() as WalletDataSourceException
+		assertEquals(GemError.BackendRejected("rejected"), error.error)
+		assertEquals(listOf("hash-signed-1"), error.partialBroadcast?.transactionIds)
+		assertEquals(listOf("signed-2"), error.partialBroadcast?.unsubmittedPayloads)
+	}
+
+	@Test
+	fun `broadcast preserves a domain error from the gateway`() {
+		val domainError = WalletDataSourceException(GemError.BackendRejected("rejected"))
+		val bridge = GemstoneTransactionBridge(
+			gatewayFactory = GemGatewayFactory { object : GemGatewayApi {
+				override suspend fun getTransactionPreload(chain: String, input: GemTransactionPreloadInput): GemTransactionLoadMetadata = error("unused")
+				override suspend fun getFeeRates(chain: String, input: GemTransactionInputType): List<GemFeeRate> = error("unused")
+				override suspend fun getTransactionLoad(chain: String, input: GemTransactionLoadInput): GemTransactionData = error("unused")
+				override suspend fun transactionBroadcast(chain: String, data: String, options: BroadcastOptions): String = throw domainError
+				override suspend fun getTransactionStatus(chain: String, request: GemTransactionStateRequest): TransactionUpdate = error("unused")
+			} },
+			keystoreFactory = GemKeystoreFactory { error("unused") },
+			passwordProvider = GemPasswordProvider { ByteArray(32) },
+			draftAdapter = FailClosedGemTransactionDraftAdapter(),
+		)
+
+		val result = kotlinx.coroutines.runBlocking {
+			bridge.broadcastTransaction(SignedTransaction(WalletId("wallet"), Chain.Ethereum, listOf("signed")))
+		}
+
+		assertSame(domainError, result.exceptionOrNull())
 	}
 
 	private fun update(state: GemTransactionState) = TransactionUpdate(state = state, changes = emptyList())

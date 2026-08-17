@@ -1,6 +1,7 @@
 package com.tonapps.wallet.data.gem
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.gemstone.GemFeeRate
@@ -92,6 +93,92 @@ class GemSendCoordinatorTest {
 		assertEquals(GemError.BroadcastFailed("Gem transaction was rejected"), (result.exceptionOrNull() as WalletDataSourceException).error)
 	}
 
+	@Test
+	fun `retains accepted ids when a broadcasted transaction is rejected`() = runBlocking {
+		val broadcasted = BroadcastedTransaction(WalletId("wallet"), Chain.Ethereum, listOf("tx"))
+		val source = FakeGemWalletDataSource(
+			broadcasted = broadcasted,
+			statuses = ArrayDeque(listOf(TransactionState.Reverted)),
+		)
+
+		val result = GemSendCoordinator(source, pollDelayMillis = 0).submitOutcome(preloaded())
+
+		val failed = result as GemSendOutcome.Failed
+		assertEquals(GemError.BroadcastFailed("Gem transaction was rejected"), (failed.error as WalletDataSourceException).error)
+		assertEquals(broadcasted, failed.transaction)
+	}
+
+	@Test
+	fun `returns partial broadcast as submitted without rebroadcasting`() = runBlocking {
+		val partial = BroadcastedTransaction(WalletId("wallet"), Chain.Ethereum, listOf("tx-1"))
+		val broadcastError = WalletDataSourceException(GemError.NetworkUnavailable(), partial)
+		val source = FakeGemWalletDataSource(
+			broadcasted = partial,
+			statuses = ArrayDeque(listOf(TransactionState.Confirmed)),
+			broadcastFailure = broadcastError,
+		)
+		val coordinator = GemSendCoordinator(source, pollDelayMillis = 0)
+
+		val submitted = coordinator.submitOutcome(preloaded())
+		val confirmed = coordinator.waitForOutcome(partial)
+
+		assertEquals(GemSendOutcome.Submitted(partial, broadcastError), submitted)
+		assertEquals(GemSendOutcome.Confirmed(partial), confirmed)
+		assertEquals(1, source.broadcastCalls)
+	}
+
+	@Test
+	fun `retries only unsubmitted payloads and retains accepted ids`() = runBlocking {
+		val partial = BroadcastedTransaction(
+			WalletId("wallet"),
+			Chain.Ethereum,
+			listOf("tx-1"),
+			listOf("signed-2"),
+		)
+		val source = FakeGemWalletDataSource(
+			broadcasted = BroadcastedTransaction(WalletId("wallet"), Chain.Ethereum, listOf("tx-2")),
+			statuses = ArrayDeque(listOf(TransactionState.Confirmed, TransactionState.Confirmed)),
+		)
+
+		val result = GemSendCoordinator(source, pollDelayMillis = 0).submitOutcome(preloaded(), partial)
+
+		assertEquals(GemSendOutcome.Confirmed(
+			BroadcastedTransaction(WalletId("wallet"), Chain.Ethereum, listOf("tx-1", "tx-2")),
+		), result)
+		assertEquals(listOf("signed-2"), source.broadcastPayloads)
+	}
+
+	@Test
+	fun `does not confirm a partial multi-payload broadcast`() = runBlocking {
+		val partial = BroadcastedTransaction(
+			WalletId("wallet"),
+			Chain.Ethereum,
+			listOf("tx-1"),
+			listOf("signed-2"),
+		)
+		val source = FakeGemWalletDataSource(
+			broadcasted = partial,
+			statuses = ArrayDeque(listOf(TransactionState.Confirmed)),
+		)
+
+		val result = GemSendCoordinator(source, pollDelayMillis = 0).waitForOutcome(partial)
+
+		assertTrue(result is GemSendOutcome.Submitted)
+	}
+
+	@Test
+	fun `preserves the original data source exception`() = runBlocking {
+		val error = WalletDataSourceException(GemError.InvalidInput("invalid"))
+		val source = FakeGemWalletDataSource(
+			broadcasted = BroadcastedTransaction(WalletId("wallet"), Chain.Ethereum, listOf("tx")),
+			signFailure = error,
+		)
+
+		val result = GemSendCoordinator(source, pollDelayMillis = 0).submitAndWait(preloaded())
+
+		assertSame(error, result.exceptionOrNull())
+	}
+
 	private fun preloaded() = PreloadedTransaction(
 		draft = GemSendCoordinator.draft(
 			walletId = WalletId("wallet"),
@@ -110,19 +197,28 @@ class GemSendCoordinatorTest {
 	private class FakeGemWalletDataSource(
 		private val broadcasted: BroadcastedTransaction,
 		private val statuses: ArrayDeque<TransactionState>,
+		private val signFailure: Throwable? = null,
+		private val broadcastFailure: Throwable? = null,
 	) : WalletDataSource {
 		var statusCalls = 0
+		var broadcastCalls = 0
+		var broadcastPayloads = emptyList<String>()
 
 		override suspend fun getPortfolio(walletId: WalletId, chain: Chain) = Result.failure<WalletPortfolio>(IllegalStateException("unsupported"))
 		override suspend fun getAssets(walletId: WalletId, chain: Chain) = Result.failure<List<WalletAsset>>(IllegalStateException("unsupported"))
 		override suspend fun getTransactions(walletId: WalletId, chain: Chain, fromTimestamp: Long) = Result.failure<List<TransactionRecord>>(IllegalStateException("unsupported"))
 		override suspend fun preloadTransaction(draft: TransactionDraft) = Result.failure<PreloadedTransaction>(IllegalStateException("unsupported"))
 
-		override suspend fun signTransaction(transaction: PreloadedTransaction) = Result.success(
-			SignedTransaction(transaction.draft.walletId, transaction.draft.chain, listOf("signed")),
-		)
+		override suspend fun signTransaction(transaction: PreloadedTransaction): Result<SignedTransaction> =
+			signFailure?.let { Result.failure(it) } ?: Result.success(
+				SignedTransaction(transaction.draft.walletId, transaction.draft.chain, listOf("signed")),
+			)
 
-		override suspend fun broadcastTransaction(transaction: SignedTransaction) = Result.success(broadcasted)
+		override suspend fun broadcastTransaction(transaction: SignedTransaction): Result<BroadcastedTransaction> {
+			broadcastCalls++
+			broadcastPayloads = transaction.payloads
+			return broadcastFailure?.let { Result.failure(it) } ?: Result.success(broadcasted)
+		}
 
 		override suspend fun getTransactionStatus(
 			walletId: WalletId,

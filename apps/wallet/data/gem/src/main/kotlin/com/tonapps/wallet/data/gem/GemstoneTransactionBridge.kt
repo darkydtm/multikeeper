@@ -326,8 +326,52 @@ class GemstoneTransactionBridge(
 			throw WalletDataSourceException(GemError.InvalidInput("Signed transaction has no payloads"))
 		}
 		val gateway = gatewayFactory.create()
-		val transactionIds = transaction.payloads.map { payload ->
-			gateway.transactionBroadcast(transaction.chain.key, payload, options)
+		val transactionIds = mutableListOf<String>()
+		for (payload in transaction.payloads) {
+			try {
+				transactionIds += gateway.transactionBroadcast(transaction.chain.key, payload, options)
+			} catch (error: CancellationException) {
+				throw error
+			} catch (error: WalletDataSourceException) {
+				if (transactionIds.isEmpty() && error.partialBroadcast == null) {
+					throw error
+				}
+				val acceptedIds = transactionIds.ifEmpty {
+					error.partialBroadcast?.transactionIds.orEmpty()
+				}
+				throw WalletDataSourceException(
+					error = error.error,
+					partialBroadcast = BroadcastedTransaction(
+						transaction.walletId,
+						transaction.chain,
+						acceptedIds,
+						transaction.payloads.drop(acceptedIds.size),
+					).takeIf { it.transactionIds.isNotEmpty() } ?: error.partialBroadcast,
+					cause = error,
+				)
+			} catch (error: GemBackendException) {
+				throw WalletDataSourceException(
+					error = error.gemError,
+					partialBroadcast = BroadcastedTransaction(
+						transaction.walletId,
+						transaction.chain,
+						transactionIds,
+						transaction.payloads.drop(transactionIds.size),
+					).takeIf { it.transactionIds.isNotEmpty() },
+					cause = error,
+				)
+			} catch (error: Throwable) {
+				throw WalletDataSourceException(
+					error = GemError.NetworkUnavailable(error),
+					partialBroadcast = BroadcastedTransaction(
+						transaction.walletId,
+						transaction.chain,
+						transactionIds.toList(),
+						transaction.payloads.drop(transactionIds.size),
+					).takeIf { it.transactionIds.isNotEmpty() },
+					cause = error,
+				)
+			}
 		}
 		BroadcastedTransaction(transaction.walletId, transaction.chain, transactionIds)
 	}

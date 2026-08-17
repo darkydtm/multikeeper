@@ -75,10 +75,14 @@ import com.tonapps.wallet.data.token.TokenRepository
 import com.tonapps.wallet.data.token.entities.AccountTokenEntity
 import com.tonapps.wallet.data.token.entities.TokenRateEntity
 import com.tonapps.wallet.data.gem.AssetMetadata as GemAssetMetadata
+import com.tonapps.wallet.data.gem.BroadcastedTransaction
 import com.tonapps.wallet.data.gem.Chain as GemChain
+import com.tonapps.wallet.data.gem.GemError
+import com.tonapps.wallet.data.gem.GemSendOutcome
 import com.tonapps.wallet.data.gem.GemSendCoordinator
 import com.tonapps.wallet.data.gem.GemWalletDataSource
 import com.tonapps.wallet.data.gem.WalletId as GemWalletId
+import com.tonapps.wallet.data.gem.WalletDataSourceException
 import com.tonapps.wallet.data.gem.feeEstimate
 import com.tonapps.wallet.data.gem.selectFee
 import com.tonapps.wallet.data.tx.TransactionManager
@@ -115,6 +119,7 @@ import java.math.BigDecimal
 import java.math.BigInteger
 import java.math.RoundingMode
 import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.time.Duration.Companion.seconds
 
@@ -252,6 +257,8 @@ class SendViewModel(
     private var tronTonFee: SendFee.TronTon? = null
     private var gemFeeOptions = emptyList<SendFee.Gem>()
     private var gemTransaction: com.tonapps.wallet.data.gem.PreloadedTransaction? = null
+    private var gemBroadcastedTransaction: BroadcastedTransaction? = null
+    private val sendInFlight = AtomicBoolean(false)
 
     val feeOptions: List<SendFee>
         get() = listOfNotNull(
@@ -995,6 +1002,7 @@ class SendViewModel(
             memo = userInputFlow.value.comment?.ifBlank { null },
         )
         val transaction = gemSendCoordinator.preload(draft).getOrThrow()
+        gemBroadcastedTransaction = null
         gemTransaction = transaction
         gemFeeOptions = transaction.data.indices.mapNotNull { index ->
             val estimate = transaction.feeEstimate(index) ?: return@mapNotNull null
@@ -1618,6 +1626,7 @@ class SendViewModel(
     }
 
     fun sign() {
+        if (!sendInFlight.compareAndSet(false, true)) return
         _uiEventFlow.tryEmit(SendEvent.Loading)
         viewModelScope.launch(Dispatchers.IO) {
             val operationId = generateUuid()
@@ -1685,6 +1694,8 @@ class SendViewModel(
                     FirebaseCrashlytics.getInstance().recordException(e)
                     _uiEventFlow.tryEmit(SendEvent.Failed(e))
                 }
+            } finally {
+                sendInFlight.set(false)
             }
         }
     }
@@ -1762,7 +1773,21 @@ class SendViewModel(
 
     private suspend fun signGem() {
         val transaction = gemTransaction ?: throw IllegalStateException("Gem transaction is null")
-        gemSendCoordinator.submitAndWait(transaction).getOrThrow()
+        val outcome = gemSendCoordinator.submitOutcome(transaction, gemBroadcastedTransaction)
+        when (outcome) {
+            is GemSendOutcome.Confirmed -> gemBroadcastedTransaction = null
+            is GemSendOutcome.Submitted -> {
+                gemBroadcastedTransaction = outcome.transaction
+                throw outcome.cause ?: WalletDataSourceException(
+                    GemError.StatusUnknown,
+                    outcome.transaction,
+                )
+            }
+            is GemSendOutcome.Failed -> {
+                outcome.transaction?.let { gemBroadcastedTransaction = it }
+                throw outcome.error
+            }
+        }
     }
 
     private suspend fun send(

@@ -75,6 +75,7 @@ data class BroadcastedTransaction(
 	val walletId: WalletId,
 	val chain: Chain,
 	val transactionIds: List<String>,
+	val unsubmittedPayloads: List<String> = emptyList(),
 )
 
 data class TransactionStatus(
@@ -349,4 +350,6 @@ class CompositeWalletRepository(
 
 class WalletDataSourceException(
 	val error: GemError,
-) : IllegalStateException(error.toString())
+	val partialBroadcast: BroadcastedTransaction? = null,
+	cause: Throwable? = null,
+) : IllegalStateException(error.toString(), cause)
