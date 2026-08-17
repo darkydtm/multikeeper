@@ -65,6 +65,7 @@ class GemWebSocketClient(
 	private val priceAssets: List<String> = emptyList(),
 ) {
 	private val webSocketClient = client.newBuilder()
+		.followSslRedirects(false)
 		.pingInterval(PING_INTERVAL_MS, TimeUnit.MILLISECONDS)
 		.build()
 

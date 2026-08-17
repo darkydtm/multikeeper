@@ -194,10 +194,6 @@ abstract class CoreAPI(
                 UserAgentInterceptor(userAgent),
                 XCapabilityInterceptor(),
                 AcceptLanguageInterceptor(context.locale),
-                AuthorizationInterceptor.bearer(
-                    token = tonApiV2Key,
-                    allowDomains = allowDomains
-                ),
             )
 
             return baseOkHttpClientBuilder(
@@ -207,7 +203,14 @@ abstract class CoreAPI(
                 interceptors = interceptors,
                 delegate = delegate,
 //                cronetEngine = cronetEngine,
-            ).build()
+            ).followSslRedirects(false)
+                .addNetworkInterceptor(
+                    AuthorizationInterceptor.bearer(
+                        token = tonApiV2Key,
+                        allowDomains = allowDomains
+                    )
+                )
+                .build()
         }
 
 //        private fun requestCronet(context: Context, userAgent: String, callback: (CronetEngine) -> Unit) {

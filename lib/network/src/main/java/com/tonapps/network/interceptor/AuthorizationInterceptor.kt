@@ -1,7 +1,9 @@
 package com.tonapps.network.interceptor
 
-import android.net.Uri
+import java.io.IOException
 import okhttp3.Interceptor
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Response
 
 class AuthorizationInterceptor(
@@ -10,21 +12,18 @@ class AuthorizationInterceptor(
     private val allowDomains: () -> List<String>
 ): Interceptor {
 
-    companion object {
-        fun bearer(
-            token: () -> String,
-            allowDomains: () -> List<String>
-        ) = AuthorizationInterceptor(Type.BEARER, token, allowDomains)
-    }
-
     enum class Type {
         NONE,
         BASIC,
         BEARER
     }
 
-    private val domains: List<String>
-        get() = allowDomains().mapNotNull { Uri.parse(it).host }
+    private val domains: Set<String>
+        get() = allowDomains()
+            .mapNotNull { it.toHttpUrlOrNull() }
+            .filter { it.isHttps }
+            .map { it.host }
+            .toSet()
 
     private val headerValue: String?
         get() {
@@ -41,19 +40,43 @@ class AuthorizationInterceptor(
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
-        val url = original.url
-        val domain = url.host
-        if ((domains.isNotEmpty() && !domains.contains(domain))) {
-            return chain.proceed(original)
-        } else if (headerValue.isNullOrBlank()) {
-            return chain.proceed(original)
+        val trustedDomains = domains
+        val authorization = if (isTrustedHttps(original.url, trustedDomains)) {
+            headerValue
+        } else {
+            null
         }
 
-        val request = original.newBuilder()
-            .header("Authorization", headerValue!!)
-            .method(original.method, original.body)
+        val request = authorization?.let {
+            original.newBuilder()
+                .header("Authorization", it)
+                .method(original.method, original.body)
+                .build()
+        } ?: original.newBuilder()
+            .removeHeader("Authorization")
             .build()
 
-        return chain.proceed(request)
+        val response = chain.proceed(request)
+        if (authorization != null && response.isRedirect) {
+            val location = response.header("Location")
+            val redirectedUrl = location?.let { response.request.url.resolve(it) }
+            if (redirectedUrl != null && !isTrustedHttps(redirectedUrl, trustedDomains)) {
+                response.close()
+                throw IOException("Refusing to redirect an authorized request to an untrusted URL")
+            }
+        }
+
+        return response
+    }
+
+    private fun isTrustedHttps(url: HttpUrl, trustedDomains: Set<String>): Boolean {
+        return url.isHttps && trustedDomains.contains(url.host)
+    }
+
+    companion object {
+        fun bearer(
+            token: () -> String,
+            allowDomains: () -> List<String>
+        ) = AuthorizationInterceptor(Type.BEARER, token, allowDomains)
     }
 }

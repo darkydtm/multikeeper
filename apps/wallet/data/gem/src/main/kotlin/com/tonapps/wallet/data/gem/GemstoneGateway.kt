@@ -27,6 +27,10 @@ class GemstoneAlienProvider(
 	private val tokenProvider: GemNodeTokenProvider? = null,
 	private val baseUrl: String = GEM_NODE_BASE_URL,
 ) : AlienProvider {
+	private val credentialedClient = client.newBuilder()
+		.followSslRedirects(false)
+		.build()
+
 	override fun getEndpoint(chain: GemChain): String = "$baseUrl/${chain.trimStart('/')}"
 
 	override suspend fun request(target: AlienTarget): AlienResponse = withContext(Dispatchers.IO) {
@@ -40,11 +44,11 @@ class GemstoneAlienProvider(
 		try {
 			val token = tokenProvider?.getToken()
 				?.takeIf(String::isNotBlank)
-			val response = client.newCall(request.withToken(token)).execute()
+			val response = credentialedClient.newCall(request.withToken(token)).execute()
 			val retriedResponse = if (response.code == 401 && tokenProvider != null && token != null) {
 				response.close()
 				tokenProvider.invalidate(token)
-				client.newCall(request.withToken(tokenProvider.getToken())).execute()
+				credentialedClient.newCall(request.withToken(tokenProvider.getToken())).execute()
 			} else {
 				response
 			}
@@ -58,9 +62,12 @@ class GemstoneAlienProvider(
 		}
 	}
 
-	private fun Request.withToken(token: String?): Request = token
-		?.let { newBuilder().header("Authorization", "Bearer $it").build() }
-		?: this
+	private fun Request.withToken(token: String?): Request {
+		if (!url.isHttps) {
+			return newBuilder().removeHeader("Authorization").build()
+		}
+		return token?.let { newBuilder().header("Authorization", "Bearer $it").build() } ?: this
+	}
 }
 
 class GemNodeTokenProvider(
