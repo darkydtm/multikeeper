@@ -44,6 +44,18 @@ abstract class CoreAPI(
         delegate = delegate,
     ).build()
 
+    val tonConnectBridgeHttpClient = baseOkHttpClientBuilder(
+//        cronetEngine = { cronetEngine },
+        timeoutSeconds = 60,
+        callTimeoutSeconds = 0,
+        rateLimit = 15,
+        context = context,
+        interceptors = listOf(
+            UserAgentInterceptor(userAgent),
+        ),
+        delegate = delegate,
+    ).build()
+
 
     val tronHttpClient = baseOkHttpClientBuilder(
 //        cronetEngine = { cronetEngine },
