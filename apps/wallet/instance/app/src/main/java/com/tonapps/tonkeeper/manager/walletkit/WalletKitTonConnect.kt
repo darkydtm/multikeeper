@@ -59,7 +59,6 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
 class WalletKitTonConnect(
@@ -223,7 +222,7 @@ class WalletKitTonConnect(
                         // notified and updated using connections flow
                     }
                     is TONWalletKitEvent.RequestError -> {
-                        L.e("Request error: ${event.event}")
+                        L.e("WalletKit request error")
                     }
                 }
             } catch (e: Exception) {

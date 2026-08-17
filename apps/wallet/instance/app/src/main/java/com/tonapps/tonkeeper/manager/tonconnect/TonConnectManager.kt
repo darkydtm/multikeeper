@@ -89,7 +89,10 @@ class TonConnectManager(
     private val eventsFlow = _eventsFlow.asSharedFlow().mapNotNull { event ->
         val lastAppRequestId = dAppsRepository.getLastAppRequestId(event.connection.clientId)
         if (lastAppRequestId >= event.message.id) {
-            DevSettings.tonConnectLog("Last app event id: $lastAppRequestId\nIgnore event: $event", error = true)
+            DevSettings.tonConnectLog(
+                "Ignoring stale TonConnect event ${event.message.id}; last handled event is $lastAppRequestId",
+                error = true
+            )
             return@mapNotNull null
         }
         event

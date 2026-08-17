@@ -8,13 +8,13 @@ sealed class TonConnectException(message: String): Exception(message) {
 
     data class WrongClientId(
         val clientId: String?
-    ): TonConnectException("Wrong clientId: ${if (clientId.isNullOrBlank()) "null" else clientId}")
+    ): TonConnectException("Wrong clientId")
 
     data class RequestParsingError(
         val data: String?
-    ): TonConnectException("Invalid ConnectRequest data: ${if (data.isNullOrBlank()) "null" else data}")
+    ): TonConnectException("Invalid ConnectRequest data")
 
     data class ReturnParsingError(
         val data: String?
-    ): TonConnectException("Invalid return data: ${if (data.isNullOrBlank()) "null" else data}")
+    ): TonConnectException("Invalid return data")
 }
