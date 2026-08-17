@@ -43,7 +43,6 @@ import uikit.HapticHelper
 import uikit.base.BaseFragment
 import uikit.extensions.bottomBarsOffset
 import uikit.extensions.collectFlow
-import uikit.extensions.pinToBottomInsets
 import uikit.extensions.setColor
 import uikit.navigation.Navigation.Companion.navigation
 import uikit.widget.LoaderView
@@ -51,22 +50,6 @@ import uikit.widget.SimpleRecyclerView
 import uikit.widget.SlideActionView
 
 class SignFragment: BaseFragment(R.layout.fragment_sign), BaseFragment.Modal {
-
-    companion object {
-
-        fun newInstance(
-            id: Long,
-            body: Cell,
-            v: String,
-            returnResult: ReturnResultEntity,
-            seqno: Int,
-            network: TonNetwork
-        ): SignFragment {
-            val fragment = SignFragment()
-            fragment.arguments = SignArgs.bundle(id, body, v, returnResult, seqno, network)
-            return fragment
-        }
-    }
 
     private val args: SignArgs by lazy { SignArgs(requireArguments()) }
     private val signViewModel: SignViewModel by viewModel { parametersOf(args.id, args.body, args.v, args.seqno, args.network) }
@@ -193,6 +176,7 @@ class SignFragment: BaseFragment(R.layout.fragment_sign), BaseFragment.Modal {
 
     private fun returnSignature(uri: Uri, signature: ByteArray) {
         val intent = Intent(Intent.ACTION_VIEW, uri.buildUpon().appendQueryParameter(Key.SIGN, hex(signature)).build())
+        intent.setPackage("com.ton_keeper")
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         startActivity(intent)
         finish()
@@ -249,5 +233,21 @@ class SignFragment: BaseFragment(R.layout.fragment_sign), BaseFragment.Modal {
         span.setColor(requireContext().textTertiaryColor,0, label.length)
         span.setColor(requireContext().textSecondaryColor, label.length, span.length)
         subtitleView.text = span
+    }
+
+    companion object {
+
+        fun newInstance(
+            id: Long,
+            body: Cell,
+            v: String,
+            returnResult: ReturnResultEntity,
+            seqno: Int,
+            network: TonNetwork
+        ): SignFragment {
+            val fragment = SignFragment()
+            fragment.arguments = SignArgs.bundle(id, body, v, returnResult, seqno, network)
+            return fragment
+        }
     }
 }
