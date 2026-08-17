@@ -29,9 +29,13 @@ open class Vault(
     }
 
     suspend fun isValidPassword(password: CharArray): Boolean = withContext(coroutineContext) {
-        val valid = passwordKey.isValid(password)
-        tryCallGC()
-        valid
+        try {
+            val valid = passwordKey.isValid(password)
+            tryCallGC()
+            valid
+        } finally {
+            password.clear()
+        }
     }
 
     suspend fun get(secret: SecretKey, id: Long): ByteArray = withContext(coroutineContext) {
@@ -48,52 +52,63 @@ open class Vault(
 
     suspend fun getMasterSecret(password: CharArray): SecretKey = withContext(coroutineContext) {
         val passwordSecret = passwordKey.create(password) ?: throw IllegalStateException("Password secret is null")
-        val masterSecret = masterKey.getSecret(passwordSecret)
-        passwordSecret.safeDestroy()
-        tryCallGC()
-
-        masterSecret ?: throw IllegalStateException("Master secret is null")
+        try {
+            val masterSecret = masterKey.getSecret(passwordSecret)
+            tryCallGC()
+            masterSecret ?: throw IllegalStateException("Master secret is null")
+        } finally {
+            passwordSecret.safeDestroy()
+            password.clear()
+        }
     }
 
     suspend fun createMasterSecret(password: CharArray): SecretKey = withContext(coroutineContext) {
         val passwordSecret = passwordKey.set(password) ?: throw IllegalStateException("Password secret is null")
-        val masterSecret = masterKey.newSecret(passwordSecret)
-        passwordSecret.safeDestroy()
-        tryCallGC()
-
-        masterSecret ?: throw IllegalStateException("Master secret is null")
+        try {
+            val masterSecret = masterKey.newSecret(passwordSecret)
+            tryCallGC()
+            masterSecret ?: throw IllegalStateException("Master secret is null")
+        } finally {
+            passwordSecret.safeDestroy()
+            password.clear()
+        }
     }
 
     suspend fun changePassword(
         newPassword: CharArray,
         oldPassword: CharArray
     ): Boolean = withContext(coroutineContext) {
-        val oldPasswordSecret = passwordKey.create(oldPassword)
-        if (oldPasswordSecret == null) {
+        var oldPasswordSecret: SecretKey? = null
+        var newPasswordSalt: ByteArray? = null
+        var newPasswordSecret: SecretKey? = null
+        var newPasswordVerification: ByteArray? = null
+
+        try {
+            oldPasswordSecret = passwordKey.create(oldPassword)
+            if (oldPasswordSecret == null) {
+                return@withContext false
+            }
+
+            newPasswordSalt = PasswordKey.generateSalt()
+            newPasswordSecret = PasswordKey.generateSecretKey(newPassword, newPasswordSalt!!)
+            if (newPasswordSecret == null) {
+                return@withContext false
+            }
+
+            newPasswordVerification = PasswordKey.calcVerification(newPasswordSecret!!.encoded)
+            val reEncrypted = masterKey.reEncryptSecret(oldPasswordSecret!!, newPasswordSecret!!)
+            if (reEncrypted) {
+                passwordKey.setSaltAndVerification(newPasswordSalt!!, newPasswordVerification!!)
+            }
+
+            tryCallGC()
+            reEncrypted
+        } finally {
+            oldPasswordSecret?.safeDestroy()
+            newPasswordSecret?.safeDestroy()
+            clear(newPasswordSalt, newPasswordVerification)
+            oldPassword.clear()
             newPassword.clear()
-            return@withContext false
         }
-
-        val newPasswordSalt = PasswordKey.generateSalt()
-        val newPasswordSecret = PasswordKey.generateSecretKey(newPassword, newPasswordSalt)
-
-        if (newPasswordSecret == null) {
-            oldPasswordSecret.safeDestroy()
-            newPasswordSalt.clear()
-            return@withContext false
-        }
-
-        val newPasswordVerification = PasswordKey.calcVerification(newPasswordSecret.encoded)
-        val reEncrypted = masterKey.reEncryptSecret(oldPasswordSecret, newPasswordSecret)
-        if (reEncrypted) {
-            passwordKey.setSaltAndVerification(newPasswordSalt, newPasswordVerification)
-        }
-
-        oldPasswordSecret.safeDestroy()
-        newPasswordSecret.safeDestroy()
-        clear(newPasswordSalt, newPasswordVerification)
-
-        tryCallGC()
-        return@withContext reEncrypted
     }
 }
