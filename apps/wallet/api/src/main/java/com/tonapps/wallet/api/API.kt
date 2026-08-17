@@ -16,9 +16,9 @@ import com.tonapps.blockchain.ton.extensions.hex
 import com.tonapps.blockchain.ton.extensions.isValidTonAddress
 import com.tonapps.blockchain.ton.extensions.toRawAddress
 import com.tonapps.extensions.map
-import com.tonapps.extensions.toUriOrNull
 import com.tonapps.icu.Coins
 import com.tonapps.log.L
+import com.tonapps.network.HttpsOrigin
 import com.tonapps.network.SSEvent
 import com.tonapps.network.execute
 import com.tonapps.network.get
@@ -84,6 +84,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -182,25 +183,14 @@ class API(
         options: String,
         network: TonNetwork
     ): Response = withContext(Dispatchers.IO) {
-        val uri = url.toUriOrNull() ?: throw Exception("Invalid URL")
-        if (uri.scheme != "https") {
+        val requestUrl = url.toHttpUrlOrNull() ?: throw Exception("Invalid URL")
+        if (!requestUrl.isHttps) {
             throw Exception("Invalid scheme. Should be https")
         }
 
-        val host = runCatching { uri.host }
-            .getOrNull()
-
-        if (host.isNullOrBlank()) {
-            throw Exception("Invalid host. Should be non-empty")
-        }
-
-        val isContains = getConfig(network)
-            .domains
-            .mapNotNull { Uri.parse(it).host }
-            .any { it.equals(host, ignoreCase = true) }
-
-        if (!isContains) {
-            throw Exception("Invalid host. Should be tonapi.io")
+        val config = getConfig(network)
+        if (!HttpsOrigin.matches(requestUrl, config.domains)) {
+            throw Exception("Invalid origin. Should be a trusted HTTPS origin")
         }
 
         val builder = Request.Builder().url(url)

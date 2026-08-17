@@ -25,6 +25,7 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.okhttp.sse)
     implementation(libs.koin.core)
+    testImplementation(libs.junit)
 
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)

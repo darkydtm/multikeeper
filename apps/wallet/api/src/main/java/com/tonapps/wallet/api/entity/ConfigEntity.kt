@@ -5,6 +5,7 @@ import android.os.Parcelable
 import androidx.core.net.toUri
 import com.tonapps.extensions.toStringList
 import com.tonapps.icu.Coins
+import com.tonapps.network.HttpsOrigin
 import com.tonapps.wallet.api.Constants
 import kotlinx.parcelize.IgnoredOnParcel
 import kotlinx.parcelize.Parcelize
@@ -332,7 +333,7 @@ data class ConfigEntity(
             val host = uri.host?.lowercase(Locale.US)
             require(uri.scheme.equals("https", ignoreCase = true)) { "Invalid config URL scheme: $name" }
             require(host != null && uri.userInfo == null) { "Invalid config URL: $name" }
-            require(uri.port == -1 || uri.port == 443) { "Invalid config URL port: $name" }
+            require(HttpsOrigin.parse(candidate) != null) { "Invalid config URL port: $name" }
             require(host in trustedHosts) { "Untrusted config URL host: $name" }
         }
 
