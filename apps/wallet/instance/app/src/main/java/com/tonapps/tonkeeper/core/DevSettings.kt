@@ -1,7 +1,5 @@
 package com.tonapps.tonkeeper.core
 
-import android.annotation.SuppressLint
-import android.content.Context
 import com.tonapps.log.L
 import com.tonapps.extensions.putBoolean
 import com.tonapps.extensions.putLong
@@ -16,12 +14,6 @@ import com.tonapps.tonkeeperx.BuildConfig
 object DevSettings {
 
     private val prefs by lazy { App.instance.getSharedPreferences("dev_settings", 0) }
-
-    fun checkInstallationVersion(version: Long) {
-        if (installationVersion == 0L) {
-            installationVersion = version
-        }
-    }
 
     var installationVersion: Long = prefs.getLong("install_version", 0)
         set(value) {
@@ -79,13 +71,24 @@ object DevSettings {
             }
         }
 
-    var tonConnectLogs: Boolean = prefs.getBoolean("ton_connect_logs", false)
-        set(value) {
-            if (field != value) {
-                field = value
-                prefs.putBoolean("ton_connect_logs", value)
-            }
-        }
+	var tonConnectLogs: Boolean = if (BuildConfig.DEBUG) {
+		prefs.getBoolean("ton_connect_logs", false)
+	} else {
+		prefs.edit().remove("ton_connect_logs").apply()
+		false
+	}
+		get() = field && BuildConfig.DEBUG
+		set(value) {
+			if (!BuildConfig.DEBUG) {
+				field = false
+				prefs.edit().remove("ton_connect_logs").apply()
+				return
+			}
+			if (field != value) {
+				field = value
+				prefs.putBoolean("ton_connect_logs", value)
+			}
+		}
 
     var isLogsEnabled: Boolean = prefs.getBoolean("is_logs_enabled", false)
         set(value) {
@@ -111,17 +114,6 @@ object DevSettings {
             }
         }
 
-
-    fun tonConnectLog(message: String, error: Boolean = false) {
-        if (tonConnectLogs || BuildConfig.DEBUG) {
-            if (error) {
-                L.e("TonConnect", message)
-            } else {
-                L.d("TonConnect", message)
-            }
-        }
-    }
-
     // Migrations
     var isWebviewFolderMigrated: Boolean = prefs.getBoolean("is_webview_folder_migrated", false)
         set(value) {
@@ -130,4 +122,22 @@ object DevSettings {
                 prefs.putBoolean("is_webview_folder_migrated", value)
             }
         }
+
+    fun checkInstallationVersion(version: Long) {
+        if (installationVersion == 0L) {
+            installationVersion = version
+        }
+    }
+
+    fun tonConnectLog(message: String, error: Boolean = false) {
+        if (!BuildConfig.DEBUG) {
+            return
+        }
+        if (error) {
+            L.e("TonConnect", message)
+        } else {
+            L.d("TonConnect", message)
+        }
+    }
+
 }

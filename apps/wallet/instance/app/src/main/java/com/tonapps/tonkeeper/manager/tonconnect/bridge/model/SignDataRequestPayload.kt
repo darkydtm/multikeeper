@@ -1,23 +1,18 @@
 package com.tonapps.tonkeeper.manager.tonconnect.bridge.model
 
 import android.os.Parcelable
-import com.tonapps.log.L
 import com.tonapps.base64.decodeBase64
 import com.tonapps.base64.encodeBase64
 import com.tonapps.blockchain.ton.extensions.cellFromBase64
-import com.tonapps.blockchain.ton.tlb.JettonTransfer
 import com.tonapps.tonkeeper.core.DevSettings
 import kotlinx.parcelize.IgnoredOnParcel
 import kotlinx.parcelize.Parcelize
 import org.json.JSONObject
 import org.ton.tlb.AbstractTlbConstructor
-import org.ton.tlb.CellRef
-import org.ton.tlb.TlbConstructor
-import org.ton.tlb.TlbPrettyPrinter
-import org.ton.tlb.asTlbCombinator
-import org.ton.tlb.constructor.AnyTlbConstructor
 
 abstract class SignDataRequestPayload(val type: String): Parcelable {
+
+    abstract fun toJSON(): JSONObject
 
     companion object {
 
@@ -25,7 +20,7 @@ abstract class SignDataRequestPayload(val type: String): Parcelable {
             return try {
                 parse(JSONObject(value))
             } catch (e: Throwable) {
-                L.e("TonConnect", "Failed to parse SignDataRequestPayload: $value", e)
+                DevSettings.tonConnectLog("Failed to parse sign-data payload (${e::class.simpleName})", error = true)
                 null
             }
         }
@@ -86,6 +81,11 @@ abstract class SignDataRequestPayload(val type: String): Parcelable {
             AbstractTlbConstructor.Companion.formatSchema(schema)
         }
 
+        constructor(json: JSONObject): this(
+            schema = json.getString("schema"),
+            cellBase64 = json.getString("cell")
+        )
+
         fun print(): String {
             /*val ref = CellRef(cell = value, AnyTlbConstructor)
 
@@ -100,17 +100,10 @@ abstract class SignDataRequestPayload(val type: String): Parcelable {
             return value.toString()
         }
 
-        constructor(json: JSONObject): this(
-            schema = json.getString("schema"),
-            cellBase64 = json.getString("cell")
-        )
-
         override fun toJSON() = JSONObject().apply {
             put("type", type)
             put("schema", schema)
             put("cell", cellBase64)
         }
     }
-
-    abstract fun toJSON(): JSONObject
 }

@@ -112,6 +112,9 @@ class DevScreen: BaseWalletScreen<ScreenContext.None>(R.layout.fragment_dev, Scr
         }
 
         tonConnectLogsView = view.findViewById(R.id.tc_logs)
+        if (!BuildConfig.DEBUG) {
+            tonConnectLogsView.visibility = View.GONE
+        }
         tonConnectLogsView.setChecked(DevSettings.tonConnectLogs, false)
         tonConnectLogsView.doOnCheckedChanged = { isChecked, byUser ->
             if (byUser) {

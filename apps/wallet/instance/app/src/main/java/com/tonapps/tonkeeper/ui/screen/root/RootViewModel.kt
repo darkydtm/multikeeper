@@ -424,7 +424,7 @@ class RootViewModel(
             }
             DevSettings.tonConnectLog("WalletKit transaction approved", error = false)
         } catch (e: Throwable) {
-            DevSettings.tonConnectLog("Error signing WalletKit transaction: ${e.bestMessage}", error = true)
+            DevSettings.tonConnectLog("Error signing WalletKit transaction (${e::class.simpleName})", error = true)
             if (e is CancellationException) {
                 tonConnectBridge.showLogoutAppBar(wallet, context, dAppUrl)
             }
@@ -459,7 +459,7 @@ class RootViewModel(
             }
             DevSettings.tonConnectLog("WalletKit sign data approved", error = false)
         } catch (e: Throwable) {
-            DevSettings.tonConnectLog("Error signing WalletKit data: ${e.bestMessage}", error = true)
+            DevSettings.tonConnectLog("Error signing WalletKit data (${e::class.simpleName})", error = true)
             if (e is CancellationException) {
                 tonConnectBridge.showLogoutAppBar(wallet, context, dAppUrl)
             }
@@ -629,7 +629,7 @@ class RootViewModel(
             tonConnectBridge.sendTransactionResponseSuccess(connection, boc, eventId)
         } catch (e: Throwable) {
             DevSettings.tonConnectLog(
-                "Error while signing transaction: ${e.bestMessage}",
+                "Error while signing transaction (${e::class.simpleName})",
                 error = true
             )
             if (e is CancellationException) {
@@ -1166,7 +1166,7 @@ class RootViewModel(
             val proof = SignDataScreen.run(context, wallet, connection.appUrl, payload)
             tonConnectBridge.sendSignDataResponseSuccess(connection, proof, wallet.address, payload, eventId)
         } catch (e: Throwable) {
-            DevSettings.tonConnectLog("Error while signing data: ${e.bestMessage}", error = true)
+            DevSettings.tonConnectLog("Error while signing data (${e::class.simpleName})", error = true)
             if (e is CancellationException) {
                 tonConnectBridge.showLogoutAppBar(wallet, context, connection.appUrl)
                 tonConnectBridge.sendBridgeError(connection, BridgeError.userDeclinedTransaction(), eventId)

@@ -11,7 +11,6 @@ import com.tonapps.blockchain.ton.extensions.storeAddress
 import com.tonapps.blockchain.ton.extensions.storeCoins
 import com.tonapps.blockchain.ton.extensions.storeOpCode
 import com.tonapps.ledger.ton.remainingRefs
-import com.tonapps.tonkeeper.core.DevSettings
 import com.tonapps.wallet.data.core.entity.RawMessageEntity
 import org.ton.block.AddrStd
 import org.ton.block.Coins
@@ -30,7 +29,6 @@ private fun rebuildJettonWithCustomExcessesAccount(
     builder: CellBuilder,
     excessesAddress: AddrStd
 ): Cell {
-
     try {
         builder
             .storeOpCode(TONOpCode.JETTON_TRANSFER)
@@ -151,14 +149,6 @@ fun RawMessageEntity.getWalletTransfer(
         rebuildJettonTransferWithCustomPayload(payload, newCustomPayload)
     } else {
         payload
-    }
-
-    getStateInitRef()?.let {
-        DevSettings.tonConnectLog("parsedStateInit: $it")
-    }
-
-    if (!payload.isEmpty()) {
-        DevSettings.tonConnectLog("parsedPayload: $body")
     }
 
     val builder = WalletTransferBuilder()

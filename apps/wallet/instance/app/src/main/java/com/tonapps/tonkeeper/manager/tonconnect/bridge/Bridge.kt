@@ -1,10 +1,8 @@
 package com.tonapps.tonkeeper.manager.tonconnect.bridge
 
-import com.tonapps.log.L
 import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.tonapps.base64.encodeBase64
 import com.tonapps.blockchain.ton.connect.TONProof
-import com.tonapps.extensions.bestMessage
 import com.tonapps.extensions.optStringCompatJS
 import com.tonapps.security.CryptoBox
 import com.tonapps.security.hex
@@ -28,7 +26,7 @@ internal class Bridge(private val api: API) {
         id: Long
     ): String {
         val message = JsonBuilder.responseDisconnect(id).toString()
-        DevSettings.tonConnectLog("Send Disconnect Response to ${connection.clientId}\nMessage: $message")
+        DevSettings.tonConnectLog("Sent disconnect response for request $id")
         send(connection, message)
         return message
     }
@@ -41,7 +39,7 @@ internal class Bridge(private val api: API) {
         id: Long,
     ): String {
         val message = JsonBuilder.responseSignData(id, proof, address, payload).toString()
-        DevSettings.tonConnectLog("Send SignData Response to ${connection.clientId}\nMessage: $message")
+        DevSettings.tonConnectLog("Sent sign-data response for request $id")
         send(connection, message)
         return message
     }
@@ -52,7 +50,7 @@ internal class Bridge(private val api: API) {
         id: Long
     ): String {
         val message = JsonBuilder.responseSendTransaction(id, boc).toString()
-        DevSettings.tonConnectLog("Send Transaction Response to ${connection.clientId}\nMessage: $message")
+        DevSettings.tonConnectLog("Sent transaction response for request $id")
         send(connection, message)
         return message
     }
@@ -63,14 +61,14 @@ internal class Bridge(private val api: API) {
         id: Long,
     ): String {
         val message = JsonBuilder.responseError(id, error).toString()
-        DevSettings.tonConnectLog("Send Error to ${connection.clientId}\nMessage: $message", error = true)
+        DevSettings.tonConnectLog("Sent error response for request ${id} (code ${error.code})", error = true)
         send(connection, message)
         return message
     }
 
     suspend fun sendDisconnect(connection: AppConnectEntity): String {
         val message = JsonBuilder.disconnectEvent().toString()
-        DevSettings.tonConnectLog("Send Disconnect to ${connection.clientId}\nMessage: $message")
+        DevSettings.tonConnectLog("Sent disconnect event")
         send(connection, message)
         return message
     }
@@ -100,7 +98,7 @@ internal class Bridge(private val api: API) {
             )
             true
         } catch (e: Throwable) {
-            DevSettings.tonConnectLog("Failed to send message to $clientId: ${e.bestMessage}")
+            DevSettings.tonConnectLog("Failed to send TonConnect message (${e::class.simpleName})", error = true)
             FirebaseCrashlytics.getInstance().recordException(e)
             false
         }
@@ -110,11 +108,11 @@ internal class Bridge(private val api: API) {
         connections: List<AppConnectEntity>,
         lastEventId: Long,
     ): Flow<BridgeEvent> {
-        DevSettings.tonConnectLog("Start listening events[lastEventId=$lastEventId; connections=${connections.map { it.clientId }}]")
+        DevSettings.tonConnectLog("Started listening for bridge events from ${connections.size} connections at event $lastEventId")
         val publicKeys = connections.map { it.publicKeyHex }
         return api.tonconnectEvents(publicKeys, lastEventId, onFailure = null)
             .mapNotNull { event ->
-                DevSettings.tonConnectLog("Received event:\n$event")
+                DevSettings.tonConnectLog("Received bridge event ${event.id}")
                 val from = event.json.optStringCompatJS("from") ?: throw BridgeException(
                     message = "Event \"from\" is missing"
                 )
@@ -132,10 +130,9 @@ internal class Bridge(private val api: API) {
                     throw BridgeException(
                         connect = connection,
                         cause = e,
-                        message = "Failed to decrypt event from \"message\" field; Received: $message"
+                        message = "Failed to decrypt event from \"message\" field"
                     )
                 }
-                DevSettings.tonConnectLog("Decrypted message:\n$json")
                 val decryptedMessage = try {
                     BridgeEvent.Message(json)
                 } catch (e: Throwable) {
@@ -144,16 +141,19 @@ internal class Bridge(private val api: API) {
                         cause = e
                     )
                 }
+                DevSettings.tonConnectLog("Parsed bridge message ${decryptedMessage.method} with id ${decryptedMessage.id}")
                 BridgeEvent(
                     eventId = id,
                     message = decryptedMessage,
                     connection = connection.copy(),
                 )
-            }.catch {
-                DevSettings.tonConnectLog("Failed processing event: ${it.bestMessage}", error = true)
+            }
+            .catch {
+                DevSettings.tonConnectLog("Failed processing bridge event (${it::class.simpleName})", error = true)
                 FirebaseCrashlytics.getInstance().recordException(it)
                 val connect = (it as? BridgeException)?.connect ?: return@catch
                 sendError(connect, BridgeError.badRequest(it.message), 0)
-            }.flowOn(Dispatchers.IO)
+            }
+            .flowOn(Dispatchers.IO)
     }
 }
