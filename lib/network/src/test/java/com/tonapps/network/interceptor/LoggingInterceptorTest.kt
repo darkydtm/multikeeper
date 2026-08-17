@@ -1,5 +1,6 @@
 package com.tonapps.network.interceptor
 
+import com.tonapps.network.redactUrl
 import okhttp3.Call
 import okhttp3.Connection
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -67,6 +68,13 @@ class LoggingInterceptorTest {
 		assertFalse(redacted.contains("public"))
 		assertFalse(redacted.contains("second"))
 		assertNotEquals(url.toString(), redacted)
+	}
+
+	@Test
+	fun `redacts string URL credentials query values and fragments`() {
+		val redacted = redactUrl("https://user:password@example.com/path?token=secret#fragment")
+
+		assertEquals("https://example.com/path?token=%3Credacted%3E", redacted)
 	}
 
 	@Test
