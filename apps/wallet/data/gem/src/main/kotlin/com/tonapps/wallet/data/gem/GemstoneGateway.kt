@@ -5,6 +5,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import uniffi.gemstone.AlienException
@@ -27,6 +29,7 @@ class GemstoneAlienProvider(
 	private val tokenProvider: GemNodeTokenProvider? = null,
 	private val baseUrl: String = GEM_NODE_BASE_URL,
 ) : AlienProvider {
+	private val trustedBaseUrl = baseUrl.toHttpUrl()
 	private val credentialedClient = client.newBuilder()
 		.followSslRedirects(false)
 		.build()
@@ -42,13 +45,17 @@ class GemstoneAlienProvider(
 			}
 			.build()
 		try {
-			val token = tokenProvider?.getToken()
-				?.takeIf(String::isNotBlank)
-			val response = credentialedClient.newCall(request.withToken(token)).execute()
+			val isTrustedGemNode = request.isTrustedGemNode(trustedBaseUrl)
+			val token = if (isTrustedGemNode) {
+				tokenProvider?.getToken()?.takeIf(String::isNotBlank)
+			} else {
+				null
+			}
+			val response = credentialedClient.newCall(request.withGemNodeToken(token, trustedBaseUrl)).execute()
 			val retriedResponse = if (response.code == 401 && tokenProvider != null && token != null) {
 				response.close()
 				tokenProvider.invalidate(token)
-				credentialedClient.newCall(request.withToken(tokenProvider.getToken())).execute()
+				credentialedClient.newCall(request.withGemNodeToken(tokenProvider.getToken(), trustedBaseUrl)).execute()
 			} else {
 				response
 			}
@@ -61,13 +68,16 @@ class GemstoneAlienProvider(
 			throw AlienException.RequestException(error.message.orEmpty())
 		}
 	}
+}
 
-	private fun Request.withToken(token: String?): Request {
-		if (!url.isHttps) {
-			return newBuilder().removeHeader("Authorization").build()
-		}
-		return token?.let { newBuilder().header("Authorization", "Bearer $it").build() } ?: this
+internal fun Request.isTrustedGemNode(trustedBaseUrl: HttpUrl): Boolean =
+	trustedBaseUrl.isHttps && url.isHttps && url.host == trustedBaseUrl.host && url.port == trustedBaseUrl.port
+
+internal fun Request.withGemNodeToken(token: String?, trustedBaseUrl: HttpUrl): Request {
+	if (!isTrustedGemNode(trustedBaseUrl)) {
+		return newBuilder().removeHeader("Authorization").build()
 	}
+	return token?.let { newBuilder().header("Authorization", "Bearer $it").build() } ?: this
 }
 
 class GemNodeTokenProvider(

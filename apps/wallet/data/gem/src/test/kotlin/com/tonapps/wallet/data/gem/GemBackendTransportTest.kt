@@ -5,6 +5,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.Call
 import okhttp3.Connection
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -15,10 +16,30 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Buffer
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GemBackendTransportTest {
+	@Test
+	fun `gem node token is scoped to the trusted HTTPS host`() {
+		val trustedBaseUrl = "https://gemnodes.com".toHttpUrl()
+
+		val nodeRequest = Request.Builder()
+			.url("https://gemnodes.com/ton")
+			.build()
+		val metadataRequest = Request.Builder()
+			.url("https://metadata.example/asset.json")
+			.header("Authorization", "Bearer existing")
+			.build()
+
+		assertEquals(
+			"Bearer secret",
+			nodeRequest.withGemNodeToken("secret", trustedBaseUrl).header("Authorization"),
+		)
+		assertNull(metadataRequest.withGemNodeToken("secret", trustedBaseUrl).header("Authorization"))
+	}
+
 	@Test
 	fun `signer receives exact request path body and wallet id`() {
 		var signedMethod: String? = null
