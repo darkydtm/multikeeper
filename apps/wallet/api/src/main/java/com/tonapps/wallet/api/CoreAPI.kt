@@ -2,7 +2,6 @@ package com.tonapps.wallet.api
 
 import android.content.Context
 import android.os.Build
-import com.tonapps.apps.wallet.api.BuildConfig
 import com.tonapps.core.flags.WalletFeature
 import com.tonapps.extensions.Os
 import com.tonapps.extensions.appVersionName
@@ -28,6 +27,7 @@ abstract class CoreAPI(
 ) {
 
     val appVersionName = context.appVersionName
+
     // e.g. Tonkeeper/1.2.3 (Android; 14; Pixel Tablet)
     private val userAgent = "Tonkeeper/${appVersionName} (Android; ${Build.VERSION.RELEASE}; ${Os.deviceNameAndModel()})"
 
@@ -189,6 +189,8 @@ abstract class CoreAPI(
             )
 
             return baseOkHttpClientBuilder(
+                timeoutSeconds = timeoutSeconds,
+                callTimeoutSeconds = callTimeoutSeconds,
                 context = context,
                 interceptors = interceptors,
                 delegate = delegate,
