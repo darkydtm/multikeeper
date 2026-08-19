@@ -8,10 +8,17 @@ sealed class GattCallbackEvent {
     }
 
     sealed class ConnectionState(
+        val status: Int,
         override val generation: Long,
     ): GattCallbackEvent(), GenerationAware {
-        data class Connected(override val generation: Long): ConnectionState(generation)
-        data class Disconnected(override val generation: Long): ConnectionState(generation)
+        data class Connected(
+            val callbackStatus: Int,
+            override val generation: Long,
+        ): ConnectionState(callbackStatus, generation)
+        data class Disconnected(
+            val callbackStatus: Int,
+            override val generation: Long,
+        ): ConnectionState(callbackStatus, generation)
     }
 
     data class MtuNegociated(
@@ -39,6 +46,7 @@ sealed class GattCallbackEvent {
     data class WriteCharacteristicAck(
         val characteristicUuid: java.util.UUID,
         val isSuccess: Boolean,
+        val value: ByteArray,
         override val generation: Long,
     ): GattCallbackEvent(), GenerationAware
 }

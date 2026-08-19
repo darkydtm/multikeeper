@@ -201,6 +201,7 @@ class BleManager internal constructor(
 
         override fun onServiceDisconnected(componentName: ComponentName) {
             L.d("BleService disconnected unexpectedly")
+            disconnected(BleError.UNKNOWN)
         }
     }
 
@@ -291,7 +292,7 @@ class BleManager internal constructor(
                         onScanDevicesCallback?.invoke(scannedDevices)
                     }
 
-                    _bleState.value = BleState.Scanning(scannedDevices = scannedDevices)
+                    _bleState.value = BleState.Scanning(scannedDevices = scannedDevices.toList())
                     delay(SCAN_THROTTLE_MS)
                 }
             }

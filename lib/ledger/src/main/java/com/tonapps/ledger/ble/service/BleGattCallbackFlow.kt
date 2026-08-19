@@ -85,10 +85,10 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         L.d("GATT connection state change. state: $newState, status: $status")
         when (newState) {
             BluetoothProfile.STATE_CONNECTED -> {
-                publish(gatt) { GattCallbackEvent.ConnectionState.Connected(it) }
+                publish(gatt) { GattCallbackEvent.ConnectionState.Connected(status, it) }
             }
             BluetoothProfile.STATE_DISCONNECTED -> {
-                publish(gatt) { GattCallbackEvent.ConnectionState.Disconnected(it) }
+                publish(gatt) { GattCallbackEvent.ConnectionState.Disconnected(status, it) }
             }
         }
     }
@@ -110,7 +110,7 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
             }
         } else {
             L.w("onServicesDiscovered received: $status")
-            publish(gatt) { GattCallbackEvent.ConnectionState.Disconnected(it) }
+            publish(gatt) { GattCallbackEvent.ConnectionState.Disconnected(status, it) }
         }
     }
 
@@ -129,7 +129,7 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
                 }
             } else {
                 L.w("onMtuChanged error with status : $status")
-                publish(gatt) { GattCallbackEvent.ConnectionState.Disconnected(it) }
+                publish(gatt) { GattCallbackEvent.ConnectionState.Disconnected(status, it) }
             }
         }
     }
@@ -153,7 +153,12 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
     ) {
         L.d("------------- onCharacteristicWrite status: $status")
         publish(gatt) {
-            GattCallbackEvent.WriteCharacteristicAck(characteristic.uuid, status == BluetoothGatt.GATT_SUCCESS, it)
+            GattCallbackEvent.WriteCharacteristicAck(
+                characteristic.uuid,
+                status == BluetoothGatt.GATT_SUCCESS,
+                characteristic.value?.clone() ?: ByteArray(0),
+                it,
+            )
         }
 
     }

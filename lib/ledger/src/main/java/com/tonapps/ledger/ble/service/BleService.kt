@@ -93,7 +93,8 @@ class BleService : Service() {
         stateMachine = null
         isReady = false
 
-        val device: BluetoothDevice = bluetoothAdapter.getRemoteDevice(address)
+        return try {
+            val device: BluetoothDevice = bluetoothAdapter.getRemoteDevice(address)
 
         // We want to directly connect to the device, so we are setting the autoConnect
         // parameter to false.
@@ -108,7 +109,11 @@ class BleService : Service() {
         observeStateMachine()
         stateMachine?.build(this.applicationContext)
 
-        return true
+            true
+        } catch (_: Exception) {
+            disconnectService(BleError.INTERNAL_STATE)
+            false
+        }
     }
 
     private fun observeStateMachine() {

@@ -2,6 +2,7 @@ package com.tonapps.ledger.ble.service
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattService
 import android.content.Context
 import androidx.annotation.VisibleForTesting
@@ -49,6 +50,7 @@ class BleServiceStateMachine(
     private val bleReceiver = BleReceiver()
 
     private val scope = Async.ioScope() + Job()
+    private val eventChannel = Channel<GattCallbackEvent>(Channel.UNLIMITED)
     internal lateinit var timeoutJob: Job
     internal lateinit var pairingCallbackFlow: BlePairingCallbackFlow
 
@@ -72,9 +74,11 @@ class BleServiceStateMachine(
     init {
         gattCallbackFlow.gattFlow
             .onEach { L.d("Event Received $it") }
-            .filter {
-                (it as? GattCallbackEvent.GenerationAware)?.generation == connectionGeneration
-            }
+            .filter { (it as? GattCallbackEvent.GenerationAware)?.generation == connectionGeneration }
+            .onEach { eventChannel.trySend(it) }
+            .flowOn(Dispatchers.IO)
+            .launchIn(scope)
+        eventChannel.receiveAsFlow()
             .onEach { synchronized(this@BleServiceStateMachine) { handleGattCallbackEvent(it) } }
             .flowOn(Dispatchers.IO)
             .launchIn(scope)
@@ -84,13 +88,14 @@ class BleServiceStateMachine(
         pairingCallbackFlow = BlePairingCallbackFlow(context, deviceAddress)
         pairingCallbackFlow.bind()
         pairingCallbackFlow.gattFlow
-            .onEach { synchronized(this@BleServiceStateMachine) { handleGattCallbackEvent(it) } }
+            .onEach { eventChannel.trySend(it) }
             .flowOn(Dispatchers.IO)
             .launchIn(scope)
 
         val bluetoothGATT = device.connectGatt(context, false, gattCallbackFlow)
         if (bluetoothGATT == null) {
             pairingCallbackFlow.unbind()
+            eventChannel.close()
             pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
             return
         }
@@ -109,6 +114,7 @@ class BleServiceStateMachine(
         this.isCleared = true
         this.isBuilt = false
         scope.cancel()
+        eventChannel.close()
         _stateMachineFlow.close()
         if (::pairingCallbackFlow.isInitialized) {
             pairingCallbackFlow.unbind()
@@ -146,7 +152,7 @@ class BleServiceStateMachine(
                     BleServiceState.Created -> {
                         timeoutJob.cancel()
                         pushState(BleServiceState.WaitingServices)
-                        if (!gattInteractor.discoverService()) {
+                        if (event.status != BluetoothGatt.GATT_SUCCESS || !gattInteractor.discoverService()) {
                             pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
                         }
                     }
@@ -217,7 +223,9 @@ class BleServiceStateMachine(
             is GattCallbackEvent.WriteCharacteristicAck -> {
                 when (currentState) {
                     BleServiceState.CheckingMtu -> {
-                        if (!event.isSuccess || event.characteristicUuid != deviceService.writeCharacteristic.uuid) {
+                        if (!event.isSuccess || event.characteristicUuid != deviceService.writeCharacteristic.uuid ||
+                            !event.value.contentEquals(MTU_HANDSHAKE_COMMAND.fromHexStringToBytes())
+                        ) {
                             pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
                             return
                         }

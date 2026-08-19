@@ -33,10 +33,12 @@ class BlePairingCallbackFlow(
     }
 
     private val _gattFlow = Channel<BlePairingEvent>(Channel.UNLIMITED)
+    private var isBound = false
     val gattFlow: Flow<BlePairingEvent>
         get() = _gattFlow.receiveAsFlow()
 
     fun bind() {
+        if (isBound) return
         context.registerReceiver(
             pairingReceiver,
             IntentFilter().apply {
@@ -44,10 +46,13 @@ class BlePairingCallbackFlow(
                 addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
             }
         )
+        isBound = true
     }
 
     fun unbind() {
+        if (!isBound) return
         context.unregisterReceiver(pairingReceiver)
+        isBound = false
     }
 
     private fun pushEvent(event: BlePairingEvent) {
