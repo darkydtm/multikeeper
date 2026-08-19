@@ -25,6 +25,8 @@ class BleSender(
     var pendingCommand: FrameCommand? = null
     private lateinit var deviceService: BleDeviceService
     private var mtuSize: Int = 0
+    private var awaitingWriteAck = false
+    private var responseReceived = false
 
     fun queuApdu(apdu: ByteArray): String {
         val id = generateId(deviceAddress)
@@ -62,27 +64,48 @@ class BleSender(
         pushWaitingResponseState(command.id)
         when (gatt.sendBytes(deviceService, commandInByte)) {
             GattInteractor.WriteResult.Failed -> {
+                awaitingWriteAck = false
                 pendingCommand = null
                 commandQueue.clear()
                 pushErrorState()
             }
             GattInteractor.WriteResult.Sent -> {
+                awaitingWriteAck = false
                 if (commandQueue.isNotEmpty()) {
                     sendCommand(commandQueue.removeFirst())
                 }
             }
-            GattInteractor.WriteResult.AwaitingCallback -> Unit
+            GattInteractor.WriteResult.AwaitingCallback -> {
+                awaitingWriteAck = true
+            }
         }
     }
 
-    fun nextCommand() {
-        if (commandQueue.isNotEmpty()) {
-            val command = commandQueue.removeFirst()
-            sendCommand(command)
+    fun writeAcknowledged(success: Boolean) {
+        if (!awaitingWriteAck) return
+        awaitingWriteAck = false
+        if (!success) {
+            responseReceived = false
+            pendingCommand = null
+            commandQueue.clear()
+            pushErrorState()
+        } else if (responseReceived) {
+            responseReceived = false
+            pendingCommand = null
+            dequeuApdu()
+        } else if (commandQueue.isNotEmpty()) {
+            sendCommand(commandQueue.removeFirst())
         }
     }
 
     fun clearCommand() {
+        if (awaitingWriteAck) {
+            responseReceived = true
+            commandQueue.clear()
+            return
+        }
+        awaitingWriteAck = false
+        responseReceived = false
         pendingCommand = null
         commandQueue.clear()
     }

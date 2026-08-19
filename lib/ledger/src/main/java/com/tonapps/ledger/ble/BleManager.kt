@@ -47,8 +47,8 @@ class BleManager internal constructor(
     private var isScanning: Boolean = false
     private val _bleState = MutableSharedFlow<BleState>(
         replay = 1,
-        onBufferOverflow = BufferOverflow.DROP_LATEST,
-        extraBufferCapacity = 10
+        onBufferOverflow = BufferOverflow.SUSPEND,
+        extraBufferCapacity = 64
     )
 
     val bleState: Flow<BleState>
@@ -473,8 +473,6 @@ class BleManager internal constructor(
 
     private fun disconnected(error: BleError? = null) {
         L.d("BleService disconnected")
-        serviceEventsJob?.cancel()
-        serviceEventsJob = null
         val callbacks = synchronized(pendingSendRequest) {
             pendingSendRequest.toList().also { pendingSendRequest.clear() }
         }
@@ -491,6 +489,8 @@ class BleManager internal constructor(
                 connectionCallback?.onConnectionError(errorToSend!!)
             }
 
+            serviceEventsJob?.cancel()
+            serviceEventsJob = null
             tmpError = null
             disconnectionCallback = null
             connectionCallback = null

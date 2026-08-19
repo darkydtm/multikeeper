@@ -227,7 +227,7 @@ class BleServiceStateMachine(
                         }
                         //NOTHING TO do but not an error
                         //CharacteristicChanged can be called before write characteristic ack
-                        bleSender.nextCommand()
+                        bleSender.writeAcknowledged(event.isSuccess)
                     }
                     is BleServiceState.WaitingResponse -> {
                         if (event.characteristicUuid == deviceService.writeNoAnswerCharacteristic?.uuid) {
@@ -237,7 +237,7 @@ class BleServiceStateMachine(
                             pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
                             return
                         }
-                        bleSender.nextCommand()
+                        bleSender.writeAcknowledged(event.isSuccess)
                     }
                     else -> {
                         pushState(
@@ -275,6 +275,9 @@ class BleServiceStateMachine(
                         pushState(BleServiceState.Ready(deviceService, negotiatedMtu, null))
                     }
                     is BleServiceState.WaitingResponse -> {
+                        if (bleSender.pendingCommand == null) {
+                            return
+                        }
                         val answer = try {
                             bleReceiver.handleAnswer(
                                 bleSender.pendingCommand!!.id,

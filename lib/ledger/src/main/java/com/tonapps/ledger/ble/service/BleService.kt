@@ -15,7 +15,8 @@ import com.tonapps.log.L
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -42,7 +43,7 @@ class BleService : Service() {
     private val gattCallback = BleGattCallbackFlow()
     private var stateMachine: BleServiceStateMachine? = null
 
-    private val events: MutableSharedFlow<BleServiceEvent> = MutableSharedFlow(0, 1)
+    private val events = Channel<BleServiceEvent>(Channel.UNLIMITED)
 
     var isReady = false
 
@@ -103,9 +104,9 @@ class BleService : Service() {
             device,
             connectionGeneration
         )
+        bluetoothDeviceAddress = address
         observeStateMachine()
         stateMachine?.build(this.applicationContext)
-        bluetoothDeviceAddress = address
 
         return true
     }
@@ -140,11 +141,11 @@ class BleService : Service() {
     }
 
     private fun notify(event: BleServiceEvent) {
-        events.tryEmit(event)
+        events.trySend(event)
     }
 
     fun listenEvents(): Flow<BleServiceEvent> {
-        return events
+        return events.receiveAsFlow()
     }
 
     @Synchronized

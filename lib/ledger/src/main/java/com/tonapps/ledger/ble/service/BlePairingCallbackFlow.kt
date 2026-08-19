@@ -7,9 +7,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import com.tonapps.ledger.ble.service.model.BlePairingEvent
-import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 
 class BlePairingCallbackFlow(
     private val context: Context,
@@ -28,19 +28,17 @@ class BlePairingCallbackFlow(
         }
     }
 
-    private val _gattFlow =
-        MutableSharedFlow(
-            replay = 1,
-            extraBufferCapacity = 8,
-            onBufferOverflow = BufferOverflow.DROP_OLDEST,
-        )
+    private val _gattFlow = Channel<BlePairingEvent>(Channel.UNLIMITED)
     val gattFlow: Flow<BlePairingEvent>
-        get() = _gattFlow
+        get() = _gattFlow.receiveAsFlow()
 
     fun bind() {
         context.registerReceiver(
             pairingReceiver,
-            IntentFilter("android.bluetooth.device.action.PAIRING_REQUEST")
+            IntentFilter().apply {
+                addAction("android.bluetooth.device.action.PAIRING_REQUEST")
+                addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+            }
         )
     }
 
@@ -49,6 +47,6 @@ class BlePairingCallbackFlow(
     }
 
     private fun pushEvent(event: BlePairingEvent) {
-        _gattFlow.tryEmit(event)
+        _gattFlow.trySend(event)
     }
 }
