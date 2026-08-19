@@ -15,9 +15,9 @@ class GattInteractor(val gatt: BluetoothGatt) {
         gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
     }
 
-    fun discoverService(){
+    fun discoverService(): Boolean {
         L.d("Try discover services")
-        gatt.discoverServices()
+        return gatt.discoverServices()
     }
 
     fun enableNotification(deviceService: BleDeviceService): Boolean {

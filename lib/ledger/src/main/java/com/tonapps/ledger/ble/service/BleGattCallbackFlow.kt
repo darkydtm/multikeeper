@@ -70,15 +70,15 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         if (!gatt.device.address.equals(deviceAddress, ignoreCase = true) ||
             (activeGatt != null && activeGatt !== gatt) ||
             retiredGatts.containsKey(gatt)
-            ) {
-                return
-            }
-            val callbackEvent = event(connectionGeneration)
-            if (activeGatt === gatt) {
-                gattChannel.trySend(callbackEvent)
-            } else {
-                pendingEvents.getOrPut(gatt) { mutableListOf() }.add(callbackEvent)
-            }
+        ) {
+            return
+        }
+        val callbackEvent = event(connectionGeneration)
+        if (activeGatt === gatt) {
+            gattChannel.trySend(callbackEvent)
+        } else {
+            pendingEvents.getOrPut(gatt) { mutableListOf() }.add(callbackEvent)
+        }
     }
 
     override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {

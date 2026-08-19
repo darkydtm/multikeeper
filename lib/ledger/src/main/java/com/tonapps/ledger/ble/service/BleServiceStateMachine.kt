@@ -19,14 +19,14 @@ import com.tonapps.ledger.devices.Devices
 import com.tonapps.log.L
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
@@ -43,19 +43,16 @@ class BleServiceStateMachine(
     internal lateinit var deviceService: BleDeviceService
     var mtuSize = -1
     internal var negotiatedMtu = -1
+    private var isBuilt = false
     private val bleReceiver = BleReceiver()
 
     private val scope = Async.ioScope() + Job()
     internal lateinit var timeoutJob: Job
     internal lateinit var pairingCallbackFlow: BlePairingCallbackFlow
 
-    private val _stateMachineFlow = MutableSharedFlow<BleServiceState>(
-        replay = 1,
-        extraBufferCapacity = 64,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
+    private val _stateMachineFlow = Channel<BleServiceState>(Channel.UNLIMITED)
     val stateFlow: Flow<BleServiceState>
-        get() = _stateMachineFlow.filter { !isCleared }
+        get() = _stateMachineFlow.receiveAsFlow().filter { !isCleared }
 
     private lateinit var gattInteractor: GattInteractor
 
@@ -89,7 +86,7 @@ class BleServiceStateMachine(
         }
         timeoutJob = scope.launch {
             delay(CONNECT_TIMEOUT)
-            _stateMachineFlow.tryEmit(BleServiceState.Error(BleError.CONNECTION_TIMEOUT))
+            _stateMachineFlow.trySend(BleServiceState.Error(BleError.CONNECTION_TIMEOUT))
         }
 
         pairingCallbackFlow = BlePairingCallbackFlow(context, deviceAddress)
@@ -101,13 +98,15 @@ class BleServiceStateMachine(
 
         this.gattInteractor = GattInteractor(bluetoothGATT)
         this.isCleared = false
+        this.isBuilt = true
         gattCallbackFlow.attach(bluetoothGATT, connectionGeneration)
     }
 
     fun clear() {
         this.isCleared = true
-        _stateMachineFlow.resetReplayCache()
+        this.isBuilt = false
         scope.cancel()
+        _stateMachineFlow.close()
         if (::pairingCallbackFlow.isInitialized) {
             pairingCallbackFlow.unbind()
         }
@@ -118,6 +117,7 @@ class BleServiceStateMachine(
     }
 
     fun sendApdu(apdu: ByteArray, beforeSend: ((String) -> Unit)? = null): String {
+        check(isBuilt) { "Bluetooth state machine is not initialized" }
         val id = bleSender.queuApdu(apdu)
         beforeSend?.invoke(id)
         if (currentState is BleServiceState.Ready
@@ -127,7 +127,9 @@ class BleServiceStateMachine(
         } else { //Trigger Gatt initialization reset current state in order to ensure right initialization
             timeoutJob.cancel()
             pushState(BleServiceState.WaitingServices)
-            gattInteractor.discoverService()
+            if (!gattInteractor.discoverService()) {
+                pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+            }
         }
 
         return id
@@ -141,7 +143,9 @@ class BleServiceStateMachine(
                     BleServiceState.Created -> {
                         timeoutJob.cancel()
                         pushState(BleServiceState.WaitingServices)
-                        gattInteractor.discoverService()
+                        if (!gattInteractor.discoverService()) {
+                            pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+                        }
                     }
                     else -> {
                         pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
@@ -162,7 +166,7 @@ class BleServiceStateMachine(
                                 pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
                             }
                         } else {
-                            _stateMachineFlow.tryEmit(BleServiceState.Error(BleError.SERVICE_NOT_FOUND))
+                            _stateMachineFlow.trySend(BleServiceState.Error(BleError.SERVICE_NOT_FOUND))
                         }
                     }
                     else -> {
@@ -319,7 +323,7 @@ class BleServiceStateMachine(
         currentState = state
         //ensure state is pushed
         L.d("push state => $state")
-        _stateMachineFlow.tryEmit(state)
+        _stateMachineFlow.trySend(state)
 
         if (currentState is BleServiceState.Ready) {
             if (!bleSender.isInitialized) {

@@ -7,9 +7,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import com.tonapps.ledger.ble.service.model.BlePairingEvent
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.runBlocking
 
 class BlePairingCallbackFlow(
     private val context: Context,
@@ -29,7 +29,11 @@ class BlePairingCallbackFlow(
     }
 
     private val _gattFlow =
-        MutableSharedFlow<BlePairingEvent>(replay = 1, extraBufferCapacity = 0)
+        MutableSharedFlow(
+            replay = 1,
+            extraBufferCapacity = 8,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
     val gattFlow: Flow<BlePairingEvent>
         get() = _gattFlow
 
@@ -45,8 +49,6 @@ class BlePairingCallbackFlow(
     }
 
     private fun pushEvent(event: BlePairingEvent) {
-        runBlocking {
-            _gattFlow.emit(event)
-        }
+        _gattFlow.tryEmit(event)
     }
 }
