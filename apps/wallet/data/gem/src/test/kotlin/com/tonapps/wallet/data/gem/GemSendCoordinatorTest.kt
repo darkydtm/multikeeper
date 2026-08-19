@@ -113,7 +113,7 @@ class GemSendCoordinatorTest {
 	}
 
 	@Test
-	fun `returns partial broadcast as submitted without rebroadcasting`() = runBlocking {
+	fun `waits for an accepted broadcast without rebroadcasting`() = runBlocking {
 		val partial = BroadcastedTransaction(WalletId("wallet"), Chain.Ethereum, listOf("tx-1"))
 		val broadcastError = WalletDataSourceException(GemError.NetworkUnavailable(), partial)
 		val source = FakeGemWalletDataSource(

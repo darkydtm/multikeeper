@@ -35,7 +35,7 @@ class GemRuntimeCoordinator(
 	private val walletRegistry: GemWalletRegistry,
 	private val keystoreDeleter: GemKeystoreDeleter,
 	private val subscriptionRepository: GemSubscriptionRepository,
-	private val webSocketClient: GemWebSocketClient,
+	private val webSocketClient: GemWebSocketSource,
 	private val refresh: GemAuthoritativeRefresh? = null,
 ) {
 	private val _state = MutableStateFlow<GemRuntimeState>(GemRuntimeState.Idle)

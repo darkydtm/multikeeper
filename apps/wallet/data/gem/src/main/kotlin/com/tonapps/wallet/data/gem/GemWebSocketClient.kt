@@ -57,19 +57,23 @@ data class GemBalanceInvalidation(
 	val assetId: String,
 )
 
+fun interface GemWebSocketSource {
+	fun connect(): Flow<GemWebSocketEvent>
+}
+
 @Suppress("ClassOrdering")
 class GemWebSocketClient(
 	private val client: OkHttpClient,
 	private val signer: GemRequestSigner,
 	private val environment: GemBackendEnvironment = GemBackendEnvironment.MAINNET,
 	private val priceAssets: List<String> = emptyList(),
-) {
+) : GemWebSocketSource {
 	private val webSocketClient = client.newBuilder()
 		.followSslRedirects(false)
 		.pingInterval(PING_INTERVAL_MS, TimeUnit.MILLISECONDS)
 		.build()
 
-	fun connect(): Flow<GemWebSocketEvent> = flow {
+	override fun connect(): Flow<GemWebSocketEvent> = flow {
 		var attempt = 0
 		while (currentCoroutineContext().isActive) {
 			var connected = false

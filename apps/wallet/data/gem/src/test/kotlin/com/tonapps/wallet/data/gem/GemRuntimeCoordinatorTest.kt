@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.drop
@@ -607,15 +608,16 @@ class GemRuntimeCoordinatorTest {
 		deviceRegistration: GemDeviceRegistrationCoordinator = testDeviceRegistrationCoordinator(),
 		subscriptionBackend: GemSubscriptionBackend = RefreshSubscriptionBackend(Result.success(null)),
 		refresh: GemAuthoritativeRefresh = GemAuthoritativeRefresh { },
+		webSocketClient: GemWebSocketSource = GemWebSocketClient(
+			client = OkHttpClient.Builder().build(),
+			signer = GemRequestSigner { _, _, _, _ -> "authorization" },
+		),
 	) = GemRuntimeCoordinator(
 		deviceRegistration = deviceRegistration,
 		walletRegistry = GemWalletRegistry(InMemoryRegistryStorage()),
 		keystoreDeleter = GemKeystoreDeleter { },
 		subscriptionRepository = GemSubscriptionRepository(subscriptionBackend),
-		webSocketClient = GemWebSocketClient(
-			client = OkHttpClient.Builder().build(),
-			signer = GemRequestSigner { _, _, _, _ -> "authorization" },
-		),
+		webSocketClient = webSocketClient,
 		refresh = refresh,
 	)
 }
