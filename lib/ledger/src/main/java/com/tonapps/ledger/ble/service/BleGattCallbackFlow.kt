@@ -53,9 +53,7 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
             }
             activeGatt = gatt
             val events = pendingEvents.remove(gatt).orEmpty()
-            if (pendingDiscovery.remove(gatt) != null ||
-                events.any { it is GattCallbackEvent.ServicesDiscovered }
-            ) {
+            if (pendingDiscovery.remove(gatt) != null) {
                 discoveredGatt = gatt
             }
             events.forEach { gattChannel.trySend(it) }
@@ -72,15 +70,15 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         if (!gatt.device.address.equals(deviceAddress, ignoreCase = true) ||
             (activeGatt != null && activeGatt !== gatt) ||
             retiredGatts.containsKey(gatt)
-        ) {
-            return
-        }
-        val callbackEvent = event(connectionGeneration)
-        if (activeGatt === gatt) {
-            gattChannel.trySend(callbackEvent)
-        } else {
-            pendingEvents.getOrPut(gatt) { mutableListOf() }.add(callbackEvent)
-        }
+            ) {
+                return
+            }
+            val callbackEvent = event(connectionGeneration)
+            if (activeGatt === gatt) {
+                gattChannel.trySend(callbackEvent)
+            } else {
+                pendingEvents.getOrPut(gatt) { mutableListOf() }.add(callbackEvent)
+            }
     }
 
     override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {

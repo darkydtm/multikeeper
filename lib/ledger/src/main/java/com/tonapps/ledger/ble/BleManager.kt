@@ -156,7 +156,6 @@ class BleManager internal constructor(
                     connectionCallback?.onConnectionError(BleError.INITIALIZING_FAILED)
                     bleService.disconnectService(BleError.INITIALIZING_FAILED)
                 } else {
-                    bleService.connect(connectedDevice.id)
                     serviceEventsJob?.cancel()
                     serviceEventsJob = scope.launch {
                         bleService.listenEvents().collect { event ->
@@ -199,6 +198,7 @@ class BleManager internal constructor(
                             }
                         }
                     }
+                    bleService.connect(connectedDevice.id)
                 }
             }
         }

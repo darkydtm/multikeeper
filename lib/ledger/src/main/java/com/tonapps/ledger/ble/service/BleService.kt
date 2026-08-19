@@ -75,6 +75,7 @@ class BleService : Service() {
         stateMachine = null
         gattCallback.clear()
         isReady = false
+        bluetoothDeviceAddress = null
 
         stopSelf()
         notify(BleServiceEvent.BleDeviceDisconnected(bleError))
@@ -149,8 +150,8 @@ class BleService : Service() {
     @Synchronized
     fun sendApdu(apdu: ByteArray, beforeSend: ((String) -> Unit)? = null): String {
         L.d("Send APDU")
-        if (bluetoothDeviceAddress == null) {
-            disconnectService(BleError.NO_DEVICE_ADDRESS)
+        if (bluetoothDeviceAddress == null || stateMachine == null) {
+            throw IllegalStateException("Bluetooth device not connected, please use connect before")
         }
 
         return stateMachine!!.sendApdu(apdu, beforeSend)
