@@ -15,7 +15,7 @@ import kotlinx.coroutines.runBlocking
 class BleGattCallbackFlow : BluetoothGattCallback() {
 
     private val _gattFlow =
-        MutableSharedFlow<GattCallbackEvent>(replay = 0, extraBufferCapacity = 0)
+        MutableSharedFlow<GattCallbackEvent>(replay = 1, extraBufferCapacity = 0)
     val gattFlow: Flow<GattCallbackEvent>
         get() = _gattFlow
 

@@ -74,7 +74,9 @@ class BleServiceStateMachine(
     init {
         gattCallbackFlow.gattFlow
             .onEach { L.d("Event Received $it") }
-            .filter { it.generation == connectionGeneration }
+            .filter {
+                (it as? GattCallbackEvent.GenerationAware)?.generation == connectionGeneration
+            }
             .onEach { handleGattCallbackEvent(it) }
             .flowOn(Dispatchers.IO)
             .launchIn(scope)
@@ -82,7 +84,7 @@ class BleServiceStateMachine(
 
     fun build(context: Context) {
         val bluetoothGATT = device.connectGatt(context, false, gattCallbackFlow)
-        gattCallbackFlow.attach(bluetoothGATT!!)
+        requireNotNull(bluetoothGATT)
         timeoutJob = scope.launch {
             delay(CONNECT_TIMEOUT)
             _stateMachineFlow.tryEmit(BleServiceState.Error(BleError.CONNECTION_TIMEOUT))
@@ -95,8 +97,9 @@ class BleServiceStateMachine(
             .flowOn(Dispatchers.IO)
             .launchIn(scope)
 
-        this.gattInteractor = GattInteractor(bluetoothGATT!!)
+        this.gattInteractor = GattInteractor(bluetoothGATT)
         this.isCleared = false
+        gattCallbackFlow.attach(bluetoothGATT)
     }
 
     fun clear() {
