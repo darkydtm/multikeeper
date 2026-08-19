@@ -137,8 +137,12 @@ class BleManager internal constructor(
 
     // Bluetooth Service lifecycle.
     private var bluetoothService: BleService? = null
+
+    @Volatile
+    private var isServiceBound = false
     private var serviceEventsJob: Job? = null
     private lateinit var connectedDevice: BleDeviceModel
+    private var tmpError: BleError? = null
     var isConnected: Boolean = false
         private set
 
@@ -147,53 +151,11 @@ class BleManager internal constructor(
             L.d("Connected to BleService !")
             bluetoothService = (service as BleService.LocalBinder).service
             bluetoothService?.let { bleService ->
+                observeServiceEvents(bleService)
                 if (!bleService.initialize()) {
                     L.e("Unable to initialize Bluetooth")
-                    connectionCallback?.onConnectionError(BleError.INITIALIZING_FAILED)
                     bleService.disconnectService(BleError.INITIALIZING_FAILED)
                 } else {
-                    serviceEventsJob?.cancel()
-                    serviceEventsJob = scope.launch {
-                        bleService.listenEvents().collect { event ->
-                            when (event) {
-                                is BleServiceEvent.BleDeviceConnected -> {
-                                    connectedDevice =
-                                        connectedDevice.copy(serviceId = event.serviceUuid)
-                                    connectionCallback?.onConnectionSuccess(connectedDevice)
-                                    _bleState.value = BleState.Connected(connectedDevice)
-                                }
-                                is BleServiceEvent.BleDeviceDisconnected -> {
-                                    _bleState.value = BleState.Disconnected(event.error)
-                                    disconnected(event.error)
-                                }
-                                is BleServiceEvent.SuccessSend -> {
-                                    _bleEvents.tryEmit(BleEvent.SendingEvent.SendSuccess(event.sendId))
-                                }
-                                is BleServiceEvent.SendAnswer -> {
-                                    val callback = synchronized(pendingSendRequest) {
-                                        pendingSendRequest.firstOrNull { it.id == event.sendId }?.also {
-                                            pendingSendRequest.remove(it)
-                                        }
-                                    }
-                                    callback?.let {
-                                        callback.onSuccess(event.answer)
-                                    }
-                                }
-                                is BleServiceEvent.ErrorSend -> {
-                                    _bleEvents.tryEmit(BleEvent.Error.SendError(event.error))
-                                    val callback = synchronized(pendingSendRequest) {
-                                        pendingSendRequest.firstOrNull { it.id == event.sendId }?.also {
-                                            pendingSendRequest.remove(it)
-                                        }
-                                    }
-                                    callback?.let {
-                                        callback.onError(event.error)
-                                    }
-                                }
-                                else -> L.d("Event not handle $event")
-                            }
-                        }
-                    }
                     bleService.connect(connectedDevice.id)
                 }
             }
@@ -201,11 +163,50 @@ class BleManager internal constructor(
 
         override fun onServiceDisconnected(componentName: ComponentName) {
             L.d("BleService disconnected unexpectedly")
+            isServiceBound = false
             disconnected(BleError.UNKNOWN)
         }
     }
 
-    private var tmpError: BleError? = null
+    private fun observeServiceEvents(bleService: BleService) {
+        serviceEventsJob?.cancel()
+        serviceEventsJob = scope.launch {
+            bleService.listenEvents().collect { event ->
+                when (event) {
+                    is BleServiceEvent.BleDeviceConnected -> {
+                        connectedDevice = connectedDevice.copy(serviceId = event.serviceUuid)
+                        connectionCallback?.onConnectionSuccess(connectedDevice)
+                        _bleState.value = BleState.Connected(connectedDevice)
+                    }
+                    is BleServiceEvent.BleDeviceDisconnected -> {
+                        _bleState.value = BleState.Disconnected(event.error)
+                        disconnected(event.error)
+                    }
+                    is BleServiceEvent.SuccessSend -> {
+                        _bleEvents.tryEmit(BleEvent.SendingEvent.SendSuccess(event.sendId))
+                    }
+                    is BleServiceEvent.SendAnswer -> {
+                        val callback = synchronized(pendingSendRequest) {
+                            pendingSendRequest.firstOrNull { it.id == event.sendId }?.also {
+                                pendingSendRequest.remove(it)
+                            }
+                        }
+                        callback?.onSuccess(event.answer)
+                    }
+                    is BleServiceEvent.ErrorSend -> {
+                        _bleEvents.tryEmit(BleEvent.Error.SendError(event.error))
+                        val callback = synchronized(pendingSendRequest) {
+                            pendingSendRequest.firstOrNull { it.id == event.sendId }?.also {
+                                pendingSendRequest.remove(it)
+                            }
+                        }
+                        callback?.onError(event.error)
+                    }
+                    else -> L.d("Event not handle $event")
+                }
+            }
+        }
+    }
 
     private fun parseScanResult(result: ScanResult): BleDeviceModel? {
         val device = result.device
@@ -376,7 +377,7 @@ class BleManager internal constructor(
         device?.let {
             connectedDevice = it
             val gattServiceIntent = Intent(context, BleService::class.java)
-            context.bindService(gattServiceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
+            isServiceBound = context.bindService(gattServiceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
         } ?: run {
             connectionCallback?.onConnectionError(BleError.DEVICE_NOT_FOUND)
             _bleEvents.tryEmit(BleEvent.Error.ConnectionError(BleError.DEVICE_NOT_FOUND))
@@ -423,9 +424,10 @@ class BleManager internal constructor(
         if ((disconnectingDeferred == null
                 || disconnectingDeferred?.isCompleted == true
                 || disconnectingDeferred?.isCancelled == true)
-            && (bluetoothService != null && bluetoothService!!.isBound)
+                && isServiceBound
         ) {
             disconnectingDeferred = CompletableDeferred()
+            isServiceBound = false
             context.unbindService(serviceConnection)
             disconnectingDeferred!!.await()
         }
@@ -474,27 +476,28 @@ class BleManager internal constructor(
             pendingSendRequest.toList().also { pendingSendRequest.clear() }
         }
         callbacks.forEach { it.onError(error?.message ?: "Bluetooth device disconnected") }
-        if (bluetoothService?.isBound == true) {
+        if (isServiceBound) {
             tmpError = error
+            isServiceBound = false
             context.unbindService(serviceConnection)
-        } else {
-            //Only Call disconnection or error
-            if (tmpError == null && error == null) {
-                disconnectionCallback?.onDisconnectionSuccess()
-            } else {
-                val errorToSend = error ?: tmpError
-                connectionCallback?.onConnectionError(errorToSend!!)
-            }
-
-            serviceEventsJob?.cancel()
-            serviceEventsJob = null
-            tmpError = null
-            disconnectionCallback = null
-            connectionCallback = null
-            bluetoothService = null
-            isConnected = false
-            disconnectingDeferred?.complete(true)
         }
+
+        //Only Call disconnection or error
+        if (tmpError == null && error == null) {
+            disconnectionCallback?.onDisconnectionSuccess()
+        } else {
+            val errorToSend = error ?: tmpError
+            connectionCallback?.onConnectionError(errorToSend!!)
+        }
+
+        serviceEventsJob?.cancel()
+        serviceEventsJob = null
+        tmpError = null
+        disconnectionCallback = null
+        connectionCallback = null
+        bluetoothService = null
+        isConnected = false
+        disconnectingDeferred?.complete(true)
     }
 
     companion object {

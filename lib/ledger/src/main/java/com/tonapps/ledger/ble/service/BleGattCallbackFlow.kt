@@ -169,7 +169,11 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
     ) {
         L.d("------------- onCharacteristicChanged status: ${characteristic.value.toHexString()}")
         publish(gatt) {
-            GattCallbackEvent.CharacteristicChanged(characteristic.uuid, characteristic.value, it)
+            GattCallbackEvent.CharacteristicChanged(
+                characteristic.uuid,
+                characteristic.value?.copyOf() ?: ByteArray(0),
+                it,
+            )
         }
     }
 

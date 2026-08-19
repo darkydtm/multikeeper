@@ -104,12 +104,22 @@ class BleServiceStateMachine(
             _stateMachineFlow.trySend(BleServiceState.Error(BleError.CONNECTION_TIMEOUT))
         }
 
-        this.gattInteractor = GattInteractor(bluetoothGATT)
+        try {
+            this.gattInteractor = GattInteractor(bluetoothGATT)
+        } catch (_: Exception) {
+            timeoutJob.cancel()
+            bluetoothGATT.disconnect()
+            bluetoothGATT.close()
+            pairingCallbackFlow.unbind()
+            pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+            return
+        }
         this.isCleared = false
         this.isBuilt = true
         gattCallbackFlow.attach(bluetoothGATT, connectionGeneration)
     }
 
+    @Synchronized
     fun clear() {
         this.isCleared = true
         this.isBuilt = false
@@ -125,6 +135,7 @@ class BleServiceStateMachine(
         }
     }
 
+    @Synchronized
     fun sendApdu(apdu: ByteArray, beforeSend: ((String) -> Unit)? = null): String {
         check(isBuilt) { "Bluetooth state machine is not initialized" }
         val id = bleSender.queuApdu(apdu)
@@ -237,7 +248,9 @@ class BleServiceStateMachine(
                         if (event.characteristicUuid == deviceService.writeNoAnswerCharacteristic?.uuid) {
                             return
                         }
-                        if (!event.isSuccess || event.characteristicUuid != deviceService.writeCharacteristic.uuid && event.characteristicUuid != deviceService.writeNoAnswerCharacteristic?.uuid) {
+                        if (!event.isSuccess || event.characteristicUuid != deviceService.writeCharacteristic.uuid && event.characteristicUuid != deviceService.writeNoAnswerCharacteristic?.uuid ||
+                            bleSender.pendingCommand?.bytes?.contentEquals(event.value) != true
+                        ) {
                             pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
                             return
                         }
@@ -249,7 +262,9 @@ class BleServiceStateMachine(
                         if (event.characteristicUuid == deviceService.writeNoAnswerCharacteristic?.uuid) {
                             return
                         }
-                        if (!event.isSuccess || event.characteristicUuid != deviceService.writeCharacteristic.uuid && event.characteristicUuid != deviceService.writeNoAnswerCharacteristic?.uuid) {
+                        if (!event.isSuccess || event.characteristicUuid != deviceService.writeCharacteristic.uuid && event.characteristicUuid != deviceService.writeNoAnswerCharacteristic?.uuid ||
+                            bleSender.pendingCommand?.bytes?.contentEquals(event.value) != true
+                        ) {
                             pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
                             return
                         }
