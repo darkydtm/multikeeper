@@ -20,10 +20,9 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
     val gattFlow: Flow<GattCallbackEvent>
         get() = _gattFlow
 
-    @Volatile
-    private var hasDiscoveredService: Boolean = false
     private var deviceAddress: String? = null
     private var activeGatt: BluetoothGatt? = null
+    private var discoveredGatt: BluetoothGatt? = null
     private var connectionGeneration = 0L
     private val pendingEvents = IdentityHashMap<BluetoothGatt, MutableList<GattCallbackEvent>>()
 
@@ -32,38 +31,40 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         connectionGeneration++
         deviceAddress = address
         activeGatt = null
-        hasDiscoveredService = false
+        discoveredGatt = null
         pendingEvents.clear()
         _gattFlow.resetReplayCache()
         return connectionGeneration
     }
 
     fun attach(gatt: BluetoothGatt, generation: Long) {
-        synchronized(this) {
+        val events = synchronized(this) {
             if (generation != connectionGeneration ||
                 !gatt.device.address.equals(deviceAddress, ignoreCase = true)
             ) {
-                return
+                return@synchronized emptyList()
             }
             activeGatt = gatt
-            pendingEvents.remove(gatt)?.forEach(::pushEvent)
+            pendingEvents.remove(gatt).orEmpty()
         }
+        events.forEach(::pushEvent)
     }
 
     private fun publish(gatt: BluetoothGatt, event: (Long) -> GattCallbackEvent) {
-        synchronized(this) {
+        val callbackEvent = synchronized(this) {
             if (!gatt.device.address.equals(deviceAddress, ignoreCase = true) ||
                 (activeGatt != null && activeGatt !== gatt)
             ) {
-                return
+                return@synchronized null
             }
-            val callbackEvent = event(connectionGeneration)
             if (activeGatt === gatt) {
-                pushEvent(callbackEvent)
+                event(connectionGeneration)
             } else {
-                pendingEvents.getOrPut(gatt) { mutableListOf() }.add(callbackEvent)
+                pendingEvents.getOrPut(gatt) { mutableListOf() }.add(event(connectionGeneration))
+                null
             }
         }
+        callbackEvent?.let(::pushEvent)
     }
 
     private fun pushEvent(event: GattCallbackEvent) {
@@ -90,7 +91,13 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
     ) {
         L.d("------------- onServicesDiscovered status: $status")
         if (status == BluetoothGatt.GATT_SUCCESS) {
-            hasDiscoveredService = true
+            synchronized(this) {
+                if (gatt.device.address.equals(deviceAddress, ignoreCase = true) &&
+                    (activeGatt == null || activeGatt === gatt)
+                ) {
+                    discoveredGatt = gatt
+                }
+            }
             publish(gatt) { GattCallbackEvent.ServicesDiscovered(gatt.services, it) }
         } else {
             L.w("onServicesDiscovered received: $status")
@@ -102,7 +109,8 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         super.onMtuChanged(gatt, mtu, status)
         if (gatt == null) return
         //Seems that the callback can be reached without calling gatt.requestMtu(...)
-        if (hasDiscoveredService) {
+        val discovered = synchronized(this) { discoveredGatt === gatt }
+        if (discovered) {
             L.d("------------ onMtuChanged => MTU new size: $mtu")
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 publish(gatt) {
@@ -151,9 +159,9 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
 
     @Synchronized
     fun clear() {
-        hasDiscoveredService = false
         deviceAddress = null
         activeGatt = null
+        discoveredGatt = null
         pendingEvents.clear()
         _gattFlow.resetReplayCache()
     }

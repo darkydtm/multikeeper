@@ -59,6 +59,7 @@ class BleSender(
     private fun sendCommand(command: FrameCommand) {
         val commandInByte: ByteArray = command.bytes
         pendingCommand = command
+        pushWaitingResponseState(command.id)
         when (gatt.sendBytes(deviceService, commandInByte)) {
             GattInteractor.WriteResult.Failed -> {
                 pendingCommand = null
@@ -68,13 +69,9 @@ class BleSender(
             GattInteractor.WriteResult.Sent -> {
                 if (commandQueue.isNotEmpty()) {
                     sendCommand(commandQueue.removeFirst())
-                } else {
-                    pushWaitingResponseState(command.id)
                 }
             }
-            GattInteractor.WriteResult.AwaitingCallback -> {
-                pushWaitingResponseState(command.id)
-            }
+            GattInteractor.WriteResult.AwaitingCallback -> Unit
         }
     }
 
