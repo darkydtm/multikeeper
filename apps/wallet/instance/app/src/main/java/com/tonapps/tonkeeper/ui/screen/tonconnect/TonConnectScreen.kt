@@ -270,7 +270,7 @@ class TonConnectScreen: BaseWalletScreen<ScreenContext.None>(R.layout.fragment_t
         if (uri.scheme.equals("tg", ignoreCase = true) || uri.host.equals("t.me", ignoreCase = true)) {
             returnToTg(uri, args.fromPackageName)
         } else {
-            returnToDefault(uri)
+            returnToDefault(uri, args.fromPackageName)
         }
     }
 
@@ -282,16 +282,17 @@ class TonConnectScreen: BaseWalletScreen<ScreenContext.None>(R.layout.fragment_t
             startActivity(intent)
         } catch (e: Exception) {
             if (fromPackageName == null) {
-                returnToDefault(uri)
+                returnToDefault(uri, null)
             } else {
                 navigation?.toast(Localization.unknown_error)
             }
         }
     }
 
-    private fun returnToDefault(uri: Uri) {
+    private fun returnToDefault(uri: Uri, fromPackageName: String?) {
         try {
             val intent = Intent(Intent.ACTION_VIEW, uri)
+            fromPackageName?.let { intent.`package` = it }
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
         } catch (e: Exception) {
