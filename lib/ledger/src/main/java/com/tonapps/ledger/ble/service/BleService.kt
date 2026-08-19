@@ -84,6 +84,7 @@ class BleService : Service() {
     }
 
 
+    @Synchronized
     fun connect(address: String): Boolean {
         // Previously connected to the given device.
         // Try to reconnect.

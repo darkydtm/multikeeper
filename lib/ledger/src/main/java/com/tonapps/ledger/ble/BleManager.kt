@@ -148,6 +148,7 @@ class BleManager internal constructor(
 
     private val serviceConnection: ServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(componentName: ComponentName, service: IBinder) {
+            if (!isServiceBound) return
             L.d("Connected to BleService !")
             bluetoothService = (service as BleService.LocalBinder).service
             bluetoothService?.let { bleService ->
@@ -378,6 +379,11 @@ class BleManager internal constructor(
             connectedDevice = it
             val gattServiceIntent = Intent(context, BleService::class.java)
             isServiceBound = context.bindService(gattServiceIntent, serviceConnection, Context.BIND_AUTO_CREATE)
+            if (!isServiceBound) {
+                connectionCallback?.onConnectionError(BleError.INITIALIZING_FAILED)
+                _bleEvents.tryEmit(BleEvent.Error.ConnectionError(BleError.INITIALIZING_FAILED))
+                connectionCallback = null
+            }
         } ?: run {
             connectionCallback?.onConnectionError(BleError.DEVICE_NOT_FOUND)
             _bleEvents.tryEmit(BleEvent.Error.ConnectionError(BleError.DEVICE_NOT_FOUND))

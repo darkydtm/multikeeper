@@ -72,12 +72,6 @@ class BleServiceStateMachine(
     var pairing = false
 
     init {
-        gattCallbackFlow.gattFlow
-            .onEach { L.d("Event Received $it") }
-            .filter { (it as? GattCallbackEvent.GenerationAware)?.generation == connectionGeneration }
-            .onEach { eventChannel.trySend(it) }
-            .flowOn(Dispatchers.IO)
-            .launchIn(scope)
         eventChannel.receiveAsFlow()
             .onEach { synchronized(this@BleServiceStateMachine) { handleGattCallbackEvent(it) } }
             .flowOn(Dispatchers.IO)
@@ -85,9 +79,15 @@ class BleServiceStateMachine(
     }
 
     fun build(context: Context) {
-        pairingCallbackFlow = BlePairingCallbackFlow(context, deviceAddress, connectionGeneration)
+        pairingCallbackFlow = BlePairingCallbackFlow(
+            context,
+            deviceAddress,
+            connectionGeneration,
+        ) { eventChannel.trySend(it) }
         pairingCallbackFlow.bind()
-        pairingCallbackFlow.gattFlow
+        gattCallbackFlow.gattFlow
+            .onEach { L.d("Event Received $it") }
+            .filter { (it as? GattCallbackEvent.GenerationAware)?.generation == connectionGeneration }
             .onEach { eventChannel.trySend(it) }
             .flowOn(Dispatchers.IO)
             .launchIn(scope)
@@ -332,7 +332,7 @@ class BleServiceStateMachine(
                 }
             }
             is GattCallbackEvent.ConnectionState.Disconnected -> {
-                if (pairing) {
+                if (pairing || pairingCallbackFlow.isPairing) {
                     pushState(BleServiceState.Error(BleError.PAIRING_FAILED))
                 } else {
                     pushState(BleServiceState.Error(BleError.UNKNOWN))

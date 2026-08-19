@@ -7,14 +7,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import com.tonapps.ledger.ble.service.model.BlePairingEvent
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.receiveAsFlow
 
 class BlePairingCallbackFlow(
     private val context: Context,
     private val deviceAddress: String,
     private val connectionGeneration: Long,
+    private val onEvent: (BlePairingEvent) -> Unit,
 ) {
     private val pairingReceiver: BroadcastReceiver = object : BroadcastReceiver() {
         @SuppressLint("MissingPermission")
@@ -33,10 +31,11 @@ class BlePairingCallbackFlow(
         }
     }
 
-    private val _gattFlow = Channel<BlePairingEvent>(Channel.UNLIMITED)
     private var isBound = false
-    val gattFlow: Flow<BlePairingEvent>
-        get() = _gattFlow.receiveAsFlow()
+
+    @Volatile
+    var isPairing = false
+        private set
 
     fun bind() {
         if (isBound) return
@@ -57,6 +56,7 @@ class BlePairingCallbackFlow(
     }
 
     private fun pushEvent(event: BlePairingEvent) {
-        _gattFlow.trySend(event)
+        isPairing = event is BlePairingEvent.Pairing
+        onEvent(event)
     }
 }

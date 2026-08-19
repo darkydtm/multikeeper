@@ -13,11 +13,11 @@ sealed class GattCallbackEvent {
     ): GattCallbackEvent(), GenerationAware {
         data class Connected(
             val callbackStatus: Int,
-            override val generation: Long,
+            generation: Long,
         ): ConnectionState(callbackStatus, generation)
         data class Disconnected(
             val callbackStatus: Int,
-            override val generation: Long,
+            generation: Long,
         ): ConnectionState(callbackStatus, generation)
     }
 
