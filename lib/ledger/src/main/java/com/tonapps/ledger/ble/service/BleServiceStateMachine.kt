@@ -178,9 +178,10 @@ class BleServiceStateMachine(
             is GattCallbackEvent.WriteDescriptorAck -> {
                 when (currentState) {
                     BleServiceState.WaitingNotificationEnable -> {
-                        if (!event.isSuccess || event.descriptorUuid != deviceService.notifyCharacteristic.descriptors.first {
+                        val descriptorUuid = deviceService.notifyCharacteristic.descriptors.firstOrNull {
                                 it.uuid == android.bluetooth.BluetoothGattDescriptor.UUID_CLIENT_CHARACTERISTIC_CONFIG
-                            }.uuid) {
+                            }?.uuid
+                        if (!event.isSuccess || event.descriptorUuid != descriptorUuid) {
                             pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
                             return
                         }

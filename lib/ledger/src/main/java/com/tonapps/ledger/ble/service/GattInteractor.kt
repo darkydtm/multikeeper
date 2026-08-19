@@ -23,9 +23,9 @@ class GattInteractor(val gatt: BluetoothGatt) {
     fun enableNotification(deviceService: BleDeviceService): Boolean {
         L.d("Enable Notification")
         val notificationEnabled = gatt.setCharacteristicNotification(deviceService.notifyCharacteristic, true)
-        val descriptor = deviceService.notifyCharacteristic.descriptors.first {
+        val descriptor = deviceService.notifyCharacteristic.descriptors.firstOrNull {
             it.uuid == BluetoothGattDescriptor.UUID_CLIENT_CHARACTERISTIC_CONFIG
-        }
+        } ?: return false
         descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
         return notificationEnabled && gatt.writeDescriptor(descriptor)
     }

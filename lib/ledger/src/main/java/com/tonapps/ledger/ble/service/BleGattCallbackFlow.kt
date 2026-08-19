@@ -8,25 +8,22 @@ import android.bluetooth.BluetoothProfile
 import com.tonapps.ledger.ble.extension.toHexString
 import com.tonapps.ledger.ble.service.model.GattCallbackEvent
 import com.tonapps.log.L
-import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import java.util.IdentityHashMap
+import java.util.WeakHashMap
 
 class BleGattCallbackFlow : BluetoothGattCallback() {
 
-    private val gattChannel = MutableSharedFlow<GattCallbackEvent>(
-        replay = 64,
-        extraBufferCapacity = 64,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
+    private var gattChannel = Channel<GattCallbackEvent>(Channel.UNLIMITED)
     val gattFlow: Flow<GattCallbackEvent>
-        get() = gattChannel
+        get() = gattChannel.receiveAsFlow()
     private var deviceAddress: String? = null
     private var activeGatt: BluetoothGatt? = null
     private var discoveredGatt: BluetoothGatt? = null
     private var connectionGeneration = 0L
-    private val retiredGatts = IdentityHashMap<BluetoothGatt, Unit>()
+    private val retiredGatts = WeakHashMap<BluetoothGatt, Unit>()
     private val pendingEvents = IdentityHashMap<BluetoothGatt, MutableList<GattCallbackEvent>>()
     private val pendingDiscovery = IdentityHashMap<BluetoothGatt, Unit>()
 
@@ -41,6 +38,8 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         discoveredGatt = null
         pendingEvents.clear()
         pendingDiscovery.clear()
+        gattChannel.close()
+        gattChannel = Channel(Channel.UNLIMITED)
         return connectionGeneration
     }
 
@@ -59,7 +58,7 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
             ) {
                 discoveredGatt = gatt
             }
-            events.forEach { gattChannel.tryEmit(it) }
+            events.forEach { gattChannel.trySend(it) }
         }
     }
 
@@ -78,7 +77,7 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         }
         val callbackEvent = event(connectionGeneration)
         if (activeGatt === gatt) {
-            gattChannel.tryEmit(callbackEvent)
+            gattChannel.trySend(callbackEvent)
         } else {
             pendingEvents.getOrPut(gatt) { mutableListOf() }.add(callbackEvent)
         }
@@ -175,9 +174,12 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
     fun clear() {
         deviceAddress = null
         activeGatt?.let { retiredGatts[it] = Unit }
+        pendingEvents.keys.forEach { retiredGatts[it] = Unit }
+        pendingDiscovery.keys.forEach { retiredGatts[it] = Unit }
         activeGatt = null
         discoveredGatt = null
         pendingEvents.clear()
         pendingDiscovery.clear()
+        gattChannel.close()
     }
 }
