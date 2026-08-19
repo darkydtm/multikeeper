@@ -20,14 +20,14 @@ class GattInteractor(val gatt: BluetoothGatt) {
         gatt.discoverServices()
     }
 
-    fun enableNotification(deviceService: BleDeviceService) {
+    fun enableNotification(deviceService: BleDeviceService): Boolean {
         L.d("Enable Notification")
-        gatt.setCharacteristicNotification(deviceService.notifyCharacteristic, true)
+        val notificationEnabled = gatt.setCharacteristicNotification(deviceService.notifyCharacteristic, true)
         val descriptor = deviceService.notifyCharacteristic.descriptors.first {
             it.uuid == BluetoothGattDescriptor.UUID_CLIENT_CHARACTERISTIC_CONFIG
         }
         descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-        gatt.writeDescriptor(descriptor)
+        return notificationEnabled && gatt.writeDescriptor(descriptor)
     }
 
     fun negotiateMtu() {
@@ -35,10 +35,10 @@ class GattInteractor(val gatt: BluetoothGatt) {
         gatt.requestMtu(MAX_MTU_VALUE)
     }
 
-    fun askMtu(deviceService: BleDeviceService) {
+    fun askMtu(deviceService: BleDeviceService): Boolean {
         L.d("Ask MTU size")
         deviceService.writeCharacteristic.value = BleService.MTU_HANDSHAKE_COMMAND.fromHexStringToBytes()
-        gatt.writeCharacteristic(deviceService.writeCharacteristic)
+        return gatt.writeCharacteristic(deviceService.writeCharacteristic)
     }
 
     fun sendBytes(deviceService: BleDeviceService, bytes: ByteArray): WriteResult {

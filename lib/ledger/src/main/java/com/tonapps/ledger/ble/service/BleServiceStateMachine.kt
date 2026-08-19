@@ -30,7 +30,6 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
-import kotlinx.coroutines.runBlocking
 
 @SuppressLint("MissingPermission")
 class BleServiceStateMachine(
@@ -52,8 +51,8 @@ class BleServiceStateMachine(
 
     private val _stateMachineFlow = MutableSharedFlow<BleServiceState>(
         replay = 1,
-        extraBufferCapacity = 0,
-        onBufferOverflow = BufferOverflow.SUSPEND
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     val stateFlow: Flow<BleServiceState>
         get() = _stateMachineFlow.filter { !isCleared }
@@ -167,7 +166,9 @@ class BleServiceStateMachine(
                     BleServiceState.NegotiatingMtu -> {
                         negotiatedMtu = event.mtuSize
                         pushState(BleServiceState.WaitingNotificationEnable)
-                        gattInteractor.enableNotification(deviceService)
+                        if (!gattInteractor.enableNotification(deviceService)) {
+                            pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+                        }
                     }
                     else -> {
                         pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
@@ -184,7 +185,9 @@ class BleServiceStateMachine(
                             return
                         }
                         pushState(BleServiceState.CheckingMtu)
-                        gattInteractor.askMtu(deviceService)
+                        if (!gattInteractor.askMtu(deviceService)) {
+                            pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+                        }
                     }
                     else -> {
                         pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
@@ -305,10 +308,8 @@ class BleServiceStateMachine(
     private fun pushState(state: BleServiceState) {
         currentState = state
         //ensure state is pushed
-        runBlocking {
-            L.d("push state => $state")
-            _stateMachineFlow.emit(state)
-        }
+        L.d("push state => $state")
+        _stateMachineFlow.tryEmit(state)
 
         if (currentState is BleServiceState.Ready) {
             if (!bleSender.isInitialized) {

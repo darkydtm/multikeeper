@@ -8,17 +8,20 @@ import android.bluetooth.BluetoothProfile
 import com.tonapps.ledger.ble.extension.toHexString
 import com.tonapps.ledger.ble.service.model.GattCallbackEvent
 import com.tonapps.log.L
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import java.util.IdentityHashMap
 
 class BleGattCallbackFlow : BluetoothGattCallback() {
 
+    private val gattChannel = MutableSharedFlow<GattCallbackEvent>(
+        replay = 64,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
     val gattFlow: Flow<GattCallbackEvent>
-        get() = gattChannel.receiveAsFlow()
-
-    private var gattChannel = Channel<GattCallbackEvent>(Channel.UNLIMITED)
+        get() = gattChannel
     private var deviceAddress: String? = null
     private var activeGatt: BluetoothGatt? = null
     private var discoveredGatt: BluetoothGatt? = null
@@ -56,25 +59,28 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
             ) {
                 discoveredGatt = gatt
             }
-            events.forEach { gattChannel.trySend(it) }
+            events.forEach { gattChannel.tryEmit(it) }
         }
     }
 
     private fun publish(gatt: BluetoothGatt, event: (Long) -> GattCallbackEvent) {
         synchronized(this) {
-            if (!gatt.device.address.equals(deviceAddress, ignoreCase = true) ||
-                (activeGatt != null && activeGatt !== gatt) ||
-                retiredGatts.containsKey(gatt)
-            ) {
-                return@synchronized Unit
-            }
-            val callbackEvent = event(connectionGeneration)
-            if (activeGatt === gatt) {
-                gattChannel.trySend(callbackEvent)
-            } else {
-                pendingEvents.getOrPut(gatt) { mutableListOf() }.add(callbackEvent)
-            }
-            Unit
+            publishLocked(gatt, event)
+        }
+    }
+
+    private fun publishLocked(gatt: BluetoothGatt, event: (Long) -> GattCallbackEvent) {
+        if (!gatt.device.address.equals(deviceAddress, ignoreCase = true) ||
+            (activeGatt != null && activeGatt !== gatt) ||
+            retiredGatts.containsKey(gatt)
+        ) {
+            return
+        }
+        val callbackEvent = event(connectionGeneration)
+        if (activeGatt === gatt) {
+            gattChannel.tryEmit(callbackEvent)
+        } else {
+            pendingEvents.getOrPut(gatt) { mutableListOf() }.add(callbackEvent)
         }
     }
 
@@ -96,19 +102,14 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
     ) {
         L.d("------------- onServicesDiscovered status: $status")
         if (status == BluetoothGatt.GATT_SUCCESS) {
-            val accepted = synchronized(this) {
-                if (!gatt.device.address.equals(deviceAddress, ignoreCase = true) ||
-                    (activeGatt != null && activeGatt !== gatt) ||
-                    retiredGatts.containsKey(gatt)
+            synchronized(this) {
+                if (gatt.device.address.equals(deviceAddress, ignoreCase = true) &&
+                    (activeGatt == null || activeGatt === gatt) &&
+                    !retiredGatts.containsKey(gatt)
                 ) {
-                    false
-                } else {
                     pendingDiscovery[gatt] = Unit
-                    true
+                    publishLocked(gatt) { GattCallbackEvent.ServicesDiscovered(gatt.services, it) }
                 }
-            }
-            if (accepted) {
-                publish(gatt) { GattCallbackEvent.ServicesDiscovered(gatt.services, it) }
             }
         } else {
             L.w("onServicesDiscovered received: $status")
