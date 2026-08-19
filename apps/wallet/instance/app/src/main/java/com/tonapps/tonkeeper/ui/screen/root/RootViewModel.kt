@@ -340,8 +340,14 @@ class RootViewModel(
 
     private fun observeTonConnectTransaction() {
         tonConnectBridge.transactionRequestFlow.map { (connection, message) ->
-            val tx = RootSignTransaction(connection, message, savedState.returnUri)
+            val tx = RootSignTransaction(
+                connection,
+                message,
+                savedState.returnUri,
+                savedState.returnPackageName,
+            )
             savedState.returnUri = null
+            savedState.returnPackageName = null
             tx
         }.filter {
             !ignoreTonConnectTransaction.contains(it.hash)
@@ -408,7 +414,9 @@ class RootViewModel(
             Uri.parse(it)
         }
         val returnUri = savedState.returnUri
+        val returnPackageName = savedState.returnPackageName
         savedState.returnUri = null
+        savedState.returnPackageName = null
 
         if (dAppUrl == null) {
             DevSettings.tonConnectLog("Skipping transaction event (local) with no dAppUrl", error = false)
@@ -430,7 +438,7 @@ class RootViewModel(
             }
         } finally {
             returnUri?.let {
-                context.safeExternalOpenUri(it)
+                context.safeExternalOpenUri(it, returnPackageName)
             }
         }
     }
@@ -562,7 +570,7 @@ class RootViewModel(
         }
 
         tx.returnUri?.let {
-            context.safeExternalOpenUri(it)
+            context.safeExternalOpenUri(it, tx.returnPackageName)
         }
     }
 
@@ -798,6 +806,7 @@ class RootViewModel(
         fromPackageName: String?
     ): Boolean {
         savedState.returnUri = null
+        savedState.returnPackageName = null
         val deeplink = DeepLink(uri, fromQR, refSource)
         if (deeplink.route is DeepLinkRoute.Unknown) {
             viewModelScope.launch { showInvalidLinkToast(deeplink.route) }
@@ -831,6 +840,7 @@ class RootViewModel(
             refSource = deeplink.referrer,
             fromPackageName = fromPackageName
         )
+        savedState.returnPackageName = fromPackageName.takeIf { savedState.returnUri != null }
     }
 
     private suspend fun processDeepLink(

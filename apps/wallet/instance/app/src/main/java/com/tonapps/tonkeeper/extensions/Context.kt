@@ -59,12 +59,13 @@ val Context.isDarkMode: Boolean
 val Context.isLightTheme: Boolean
 	get() = settingsRepository?.isLightTheme ?: false
 
-fun Context.safeExternalOpenUri(uri: Uri) {
+fun Context.safeExternalOpenUri(uri: Uri, packageName: String? = null) {
     if (!TonConnect.isSafeReturnUri(uri)) {
         return
     }
     try {
         val intent = Intent(Intent.ACTION_VIEW, uri)
+        packageName?.let { intent.setPackage(it) }
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         startActivity(intent)
     } catch (e: Throwable) {

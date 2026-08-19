@@ -71,9 +71,14 @@ data class TonConnect(
             val scheme = uri.scheme?.lowercase()
             val host = uri.host?.lowercase()
             return when {
-                scheme == "tg" -> host == "resolve"
-                scheme == "https" && host == "t.me" -> uri.port == -1 && !uri.path.isNullOrBlank()
-                scheme == "tc" -> uri.toString().startsWith("tc://", ignoreCase = true)
+                scheme == "tg" -> host == "resolve" && uri.userInfo == null && uri.port == -1 &&
+                    uri.authority.equals(host, ignoreCase = true)
+                scheme == "https" && host == "t.me" -> uri.userInfo == null &&
+                    uri.port == -1 && uri.authority.equals(host, ignoreCase = true) &&
+                    !uri.path.isNullOrBlank()
+                scheme == "tc" -> host == "callback" && uri.userInfo == null && uri.port == -1 &&
+                    uri.authority.equals(host, ignoreCase = true) && uri.path.isNullOrEmpty() &&
+                    uri.query == null && uri.fragment == null
                 else -> false
             }
         }

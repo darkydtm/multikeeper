@@ -20,10 +20,18 @@ class TonConnectTest {
 	fun `rejects arbitrary callback URI destinations`() {
 		assertFalse(TonConnect.isSafeReturnUri(Uri.parse("https://attacker.example/callback")))
 		assertFalse(TonConnect.isSafeReturnUri(Uri.parse("tg://join?invite=secret")))
+		assertFalse(TonConnect.isSafeReturnUri(Uri.parse("tg://user@resolve?domain=tonkeeper")))
+		assertFalse(TonConnect.isSafeReturnUri(Uri.parse("tg://resolve:443?domain=tonkeeper")))
 		assertFalse(TonConnect.isSafeReturnUri(Uri.parse("https://t.me")))
+		assertFalse(TonConnect.isSafeReturnUri(Uri.parse("https://user@t.me/tonkeeper")))
 		assertFalse(TonConnect.isSafeReturnUri(Uri.parse("http://t.me/tonkeeper")))
 		assertFalse(TonConnect.isSafeReturnUri(Uri.parse("https://t.me:443/tonkeeper")))
-		assertFalse(TonConnect.isSafeReturnUri(Uri.parse("tc:callback")))
+		assertFalse(TonConnect.isSafeReturnUri(Uri.parse("tc://user@callback")))
+		assertFalse(TonConnect.isSafeReturnUri(Uri.parse("tc://callback:443")))
+		assertFalse(TonConnect.isSafeReturnUri(Uri.parse("tc://callback/path")))
+		assertFalse(TonConnect.isSafeReturnUri(Uri.parse("tc://callback?value=1")))
+		assertFalse(TonConnect.isSafeReturnUri(Uri.parse("tc://callback#fragment")))
+		assertFalse(TonConnect.isSafeReturnUri(Uri.parse("tc://callback.evil")))
 	}
 
 	@Test
