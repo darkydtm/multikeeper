@@ -41,17 +41,31 @@ class GattInteractor(val gatt: BluetoothGatt) {
         gatt.writeCharacteristic(deviceService.writeCharacteristic)
     }
 
-    fun sendBytes(deviceService: BleDeviceService, bytes: ByteArray): Boolean {
+    fun sendBytes(deviceService: BleDeviceService, bytes: ByteArray): WriteResult {
         deviceService.let {
             if (it.writeNoAnswerCharacteristic != null) {
                 it.writeNoAnswerCharacteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
                 it.writeNoAnswerCharacteristic.value = bytes
-                return gatt.writeCharacteristic(it.writeNoAnswerCharacteristic)
+                return if (gatt.writeCharacteristic(it.writeNoAnswerCharacteristic)) {
+                    WriteResult.Sent
+                } else {
+                    WriteResult.Failed
+                }
             } else {
                 it.writeCharacteristic.value = bytes
-                return gatt.writeCharacteristic(it.writeCharacteristic)
+                return if (gatt.writeCharacteristic(it.writeCharacteristic)) {
+                    WriteResult.AwaitingCallback
+                } else {
+                    WriteResult.Failed
+                }
             }
         }
+    }
+
+    enum class WriteResult {
+        Failed,
+        AwaitingCallback,
+        Sent,
     }
 
     companion object{

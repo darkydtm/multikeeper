@@ -99,7 +99,7 @@ class BleServiceStateMachine(
 
         this.gattInteractor = GattInteractor(bluetoothGATT)
         this.isCleared = false
-        gattCallbackFlow.attach(bluetoothGATT)
+        gattCallbackFlow.attach(bluetoothGATT, connectionGeneration)
     }
 
     fun clear() {
@@ -201,6 +201,9 @@ class BleServiceStateMachine(
                         L.d("Mtu request Sent")
                     }
                     is BleServiceState.Ready -> {
+                        if (event.characteristicUuid == deviceService.writeNoAnswerCharacteristic?.uuid) {
+                            return
+                        }
                         if (!event.isSuccess || event.characteristicUuid != deviceService.writeCharacteristic.uuid && event.characteristicUuid != deviceService.writeNoAnswerCharacteristic?.uuid) {
                             pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
                             return
@@ -210,6 +213,9 @@ class BleServiceStateMachine(
                         bleSender.nextCommand()
                     }
                     is BleServiceState.WaitingResponse -> {
+                        if (event.characteristicUuid == deviceService.writeNoAnswerCharacteristic?.uuid) {
+                            return
+                        }
                         if (!event.isSuccess || event.characteristicUuid != deviceService.writeCharacteristic.uuid && event.characteristicUuid != deviceService.writeNoAnswerCharacteristic?.uuid) {
                             pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
                             return
