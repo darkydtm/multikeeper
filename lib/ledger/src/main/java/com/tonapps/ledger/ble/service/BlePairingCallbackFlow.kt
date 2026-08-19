@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 class BlePairingCallbackFlow(
     private val context: Context,
     private val deviceAddress: String,
+    private val connectionGeneration: Long,
 ) {
     private val pairingReceiver: BroadcastReceiver = object : BroadcastReceiver() {
         @SuppressLint("MissingPermission")
@@ -25,9 +26,9 @@ class BlePairingCallbackFlow(
                 device.bondState,
             )
             when (bondState) {
-                BluetoothDevice.BOND_NONE -> pushEvent(BlePairingEvent.None)
-                BluetoothDevice.BOND_BONDING -> pushEvent(BlePairingEvent.Pairing)
-                BluetoothDevice.BOND_BONDED -> pushEvent(BlePairingEvent.Paired)
+                BluetoothDevice.BOND_NONE -> pushEvent(BlePairingEvent.None(connectionGeneration))
+                BluetoothDevice.BOND_BONDING -> pushEvent(BlePairingEvent.Pairing(connectionGeneration))
+                BluetoothDevice.BOND_BONDED -> pushEvent(BlePairingEvent.Paired(connectionGeneration))
             }
         }
     }

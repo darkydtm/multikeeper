@@ -70,6 +70,7 @@ class BleService : Service() {
         }
     }
 
+    @Synchronized
     fun disconnectService(bleError: BleError? = null) {
         listenningJob?.cancel()
         stateMachine?.clear()

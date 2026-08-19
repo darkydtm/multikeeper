@@ -156,7 +156,7 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
             GattCallbackEvent.WriteCharacteristicAck(
                 characteristic.uuid,
                 status == BluetoothGatt.GATT_SUCCESS,
-                characteristic.value?.clone() ?: ByteArray(0),
+                characteristic.value?.copyOf() ?: ByteArray(0),
                 it,
             )
         }

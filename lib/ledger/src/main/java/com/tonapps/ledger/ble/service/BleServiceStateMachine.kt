@@ -85,7 +85,7 @@ class BleServiceStateMachine(
     }
 
     fun build(context: Context) {
-        pairingCallbackFlow = BlePairingCallbackFlow(context, deviceAddress)
+        pairingCallbackFlow = BlePairingCallbackFlow(context, deviceAddress, connectionGeneration)
         pairingCallbackFlow.bind()
         pairingCallbackFlow.gattFlow
             .onEach { eventChannel.trySend(it) }
