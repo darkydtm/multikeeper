@@ -445,17 +445,28 @@ class BleManager internal constructor(
         onSuccess: (String) -> Unit,
         onError: (String) -> Unit,
     ) {
-        val id = bluetoothService?.sendApdu(apduHex.fromHexStringToBytes()) ?: run {
-            throw IllegalStateException("Bluetooth service not connected, please use connect before")
+        synchronized(pendingSendRequest) {
+            var registeredId: String? = null
+            try {
+                bluetoothService?.sendApdu(apduHex.fromHexStringToBytes()) { id ->
+                    registeredId = id
+                    pendingSendRequest.add(
+                        BleManagerSendCallback(
+                            id = id,
+                            onSuccess = onSuccess,
+                            onError = onError
+                        )
+                    )
+                } ?: run {
+                    throw IllegalStateException("Bluetooth service not connected, please use connect before")
+                }
+            } catch (exception: Exception) {
+                registeredId?.let { id ->
+                    pendingSendRequest.firstOrNull { it.id == id }?.let { pendingSendRequest.remove(it) }
+                }
+                throw exception
+            }
         }
-
-        pendingSendRequest.add(
-            BleManagerSendCallback(
-                id = id,
-                onSuccess = onSuccess,
-                onError = onError
-            )
-        )
     }
 
     private fun disconnected(error: BleError? = null) {

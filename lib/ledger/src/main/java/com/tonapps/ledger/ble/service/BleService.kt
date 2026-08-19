@@ -92,12 +92,13 @@ class BleService : Service() {
 
         // We want to directly connect to the device, so we are setting the autoConnect
         // parameter to false.
+        val connectionGeneration = gattCallback.bind(address)
         stateMachine = BleServiceStateMachine(
             gattCallback,
             address,
-            device
+            device,
+            connectionGeneration
         )
-        gattCallback.bind(address)
         observeStateMachine()
         stateMachine?.build(this.applicationContext)
         bluetoothDeviceAddress = address
@@ -143,13 +144,13 @@ class BleService : Service() {
     }
 
     @Synchronized
-    fun sendApdu(apdu: ByteArray): String {
+    fun sendApdu(apdu: ByteArray, beforeSend: ((String) -> Unit)? = null): String {
         L.d("Send APDU")
         if (bluetoothDeviceAddress == null) {
             disconnectService(BleError.NO_DEVICE_ADDRESS)
         }
 
-        return stateMachine!!.sendApdu(apdu)
+        return stateMachine!!.sendApdu(apdu, beforeSend)
     }
 
     companion object {

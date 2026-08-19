@@ -15,19 +15,41 @@ import kotlinx.coroutines.runBlocking
 class BleGattCallbackFlow : BluetoothGattCallback() {
 
     private val _gattFlow =
-        MutableSharedFlow<GattCallbackEvent>(replay = 1, extraBufferCapacity = 0)
+        MutableSharedFlow<GattCallbackEvent>(replay = 0, extraBufferCapacity = 0)
     val gattFlow: Flow<GattCallbackEvent>
         get() = _gattFlow
 
+    @Volatile
     private var hasDiscoveredService: Boolean = false
     private var deviceAddress: String? = null
+    private var activeGatt: BluetoothGatt? = null
+    private var connectionGeneration = 0L
 
-    fun bind(address: String) {
+    @Synchronized
+    fun bind(address: String): Long {
+        connectionGeneration++
         deviceAddress = address
+        activeGatt = null
+        hasDiscoveredService = false
+        _gattFlow.resetReplayCache()
+        return connectionGeneration
     }
 
-    private fun isBound(gatt: BluetoothGatt): Boolean =
-        deviceAddress != null && gatt.device.address.equals(deviceAddress, ignoreCase = true)
+    @Synchronized
+    fun attach(gatt: BluetoothGatt) {
+        activeGatt = gatt
+    }
+
+    @Synchronized
+    private fun generationFor(gatt: BluetoothGatt): Long? {
+        return if (activeGatt === gatt && deviceAddress != null &&
+            gatt.device.address.equals(deviceAddress, ignoreCase = true)
+        ) {
+            connectionGeneration
+        } else {
+            null
+        }
+    }
 
     private fun pushEvent(event: GattCallbackEvent) {
         runBlocking {
@@ -36,14 +58,14 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
     }
 
     override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-        if (!isBound(gatt)) return
+        val generation = generationFor(gatt) ?: return
         L.d("GATT connection state change. state: $newState, status: $status")
         when (newState) {
             BluetoothProfile.STATE_CONNECTED -> {
-                pushEvent(GattCallbackEvent.ConnectionState.Connected)
+                pushEvent(GattCallbackEvent.ConnectionState.Connected(generation))
             }
             BluetoothProfile.STATE_DISCONNECTED -> {
-                pushEvent(GattCallbackEvent.ConnectionState.Disconnected)
+                pushEvent(GattCallbackEvent.ConnectionState.Disconnected(generation))
             }
         }
     }
@@ -52,30 +74,31 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         gatt: BluetoothGatt,
         status: Int
     ) {
-        if (!isBound(gatt)) return
+        val generation = generationFor(gatt) ?: return
         L.d("------------- onServicesDiscovered status: $status")
         if (status == BluetoothGatt.GATT_SUCCESS) {
             hasDiscoveredService = true
             pushEvent(
-                GattCallbackEvent.ServicesDiscovered(gatt.services)
+                GattCallbackEvent.ServicesDiscovered(gatt.services, generation)
             )
         } else {
             L.w("onServicesDiscovered received: $status")
-            pushEvent(GattCallbackEvent.ConnectionState.Disconnected)
+            pushEvent(GattCallbackEvent.ConnectionState.Disconnected(generation))
         }
     }
 
     override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
         super.onMtuChanged(gatt, mtu, status)
-        if (gatt == null || !isBound(gatt)) return
+        if (gatt == null) return
+        val generation = generationFor(gatt) ?: return
         //Seems that the callback can be reached without calling gatt.requestMtu(...)
         if (hasDiscoveredService) {
             L.d("------------ onMtuChanged => MTU new size: $mtu")
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                pushEvent(GattCallbackEvent.MtuNegociated(mtu - GattInteractor.GATT_HEADER_SIZE))
+                pushEvent(GattCallbackEvent.MtuNegociated(mtu - GattInteractor.GATT_HEADER_SIZE, generation))
             } else {
                 L.w("onMtuChanged error with status : $status")
-                pushEvent(GattCallbackEvent.ConnectionState.Disconnected)
+                pushEvent(GattCallbackEvent.ConnectionState.Disconnected(generation))
             }
         }
     }
@@ -85,10 +108,10 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         descriptor: BluetoothGattDescriptor?,
         status: Int
     ) {
-        if (!isBound(gatt)) return
+        val generation = generationFor(gatt) ?: return
         super.onDescriptorWrite(gatt, descriptor, status)
         L.d("------------- onDescriptorWrite status: $status")
-        pushEvent(GattCallbackEvent.WriteDescriptorAck(descriptor?.uuid, status == BluetoothGatt.GATT_SUCCESS))
+        pushEvent(GattCallbackEvent.WriteDescriptorAck(descriptor?.uuid, status == BluetoothGatt.GATT_SUCCESS, generation))
     }
 
     override fun onCharacteristicWrite(
@@ -96,9 +119,9 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         characteristic: BluetoothGattCharacteristic,
         status: Int
     ) {
-        if (!isBound(gatt)) return
+        val generation = generationFor(gatt) ?: return
         L.d("------------- onCharacteristicWrite status: $status")
-        pushEvent(GattCallbackEvent.WriteCharacteristicAck(characteristic.uuid, status == BluetoothGatt.GATT_SUCCESS))
+        pushEvent(GattCallbackEvent.WriteCharacteristicAck(characteristic.uuid, status == BluetoothGatt.GATT_SUCCESS, generation))
 
     }
 
@@ -106,14 +129,16 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         gatt: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic
     ) {
-        if (!isBound(gatt)) return
+        val generation = generationFor(gatt) ?: return
         L.d("------------- onCharacteristicChanged status: ${characteristic.value.toHexString()}")
-        pushEvent(GattCallbackEvent.CharacteristicChanged(characteristic.uuid, characteristic.value))
+        pushEvent(GattCallbackEvent.CharacteristicChanged(characteristic.uuid, characteristic.value, generation))
     }
 
+    @Synchronized
     fun clear() {
         hasDiscoveredService = false
         deviceAddress = null
+        activeGatt = null
         _gattFlow.resetReplayCache()
     }
 }

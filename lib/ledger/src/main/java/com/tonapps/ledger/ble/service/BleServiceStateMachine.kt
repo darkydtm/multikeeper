@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
 import kotlinx.coroutines.runBlocking
@@ -36,6 +37,7 @@ class BleServiceStateMachine(
     private val gattCallbackFlow: BleGattCallbackFlow,
     private val deviceAddress: String,
     private val device: BluetoothDevice,
+    private val connectionGeneration: Long,
 ) {
     private var isCleared: Boolean = false
     internal var currentState: BleServiceState = BleServiceState.Created
@@ -61,6 +63,8 @@ class BleServiceStateMachine(
     internal val bleSender: BleSender by lazy {
         BleSender(gattInteractor, deviceAddress) { sendId ->
             pushState(BleServiceState.WaitingResponse(sendId))
+        } {
+            pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
         }
     }
 
@@ -70,6 +74,7 @@ class BleServiceStateMachine(
     init {
         gattCallbackFlow.gattFlow
             .onEach { L.d("Event Received $it") }
+            .filter { it.generation == connectionGeneration }
             .onEach { handleGattCallbackEvent(it) }
             .flowOn(Dispatchers.IO)
             .launchIn(scope)
@@ -77,6 +82,7 @@ class BleServiceStateMachine(
 
     fun build(context: Context) {
         val bluetoothGATT = device.connectGatt(context, false, gattCallbackFlow)
+        gattCallbackFlow.attach(bluetoothGATT!!)
         timeoutJob = scope.launch {
             delay(CONNECT_TIMEOUT)
             _stateMachineFlow.tryEmit(BleServiceState.Error(BleError.CONNECTION_TIMEOUT))
@@ -96,13 +102,15 @@ class BleServiceStateMachine(
     fun clear() {
         this.isCleared = true
         _stateMachineFlow.resetReplayCache()
+        scope.cancel()
         pairingCallbackFlow.unbind()
         this.gattInteractor.gatt.close()
         this.gattInteractor.gatt.disconnect()
     }
 
-    fun sendApdu(apdu: ByteArray): String {
+    fun sendApdu(apdu: ByteArray, beforeSend: ((String) -> Unit)? = null): String {
         val id = bleSender.queuApdu(apdu)
+        beforeSend?.invoke(id)
         if (currentState is BleServiceState.Ready
             || currentState is BleServiceState.WaitingResponse
         ) {

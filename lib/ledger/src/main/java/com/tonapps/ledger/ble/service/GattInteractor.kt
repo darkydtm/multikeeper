@@ -2,6 +2,7 @@ package com.tonapps.ledger.ble.service
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import com.tonapps.ledger.ble.extension.fromHexStringToBytes
 import com.tonapps.ledger.ble.model.BleDeviceService
@@ -40,14 +41,15 @@ class GattInteractor(val gatt: BluetoothGatt) {
         gatt.writeCharacteristic(deviceService.writeCharacteristic)
     }
 
-    fun sendBytes(deviceService: BleDeviceService, bytes: ByteArray) {
+    fun sendBytes(deviceService: BleDeviceService, bytes: ByteArray): Boolean {
         deviceService.let {
             if (it.writeNoAnswerCharacteristic != null) {
+                it.writeNoAnswerCharacteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
                 it.writeNoAnswerCharacteristic.value = bytes
-                gatt.writeCharacteristic(it.writeNoAnswerCharacteristic)
+                return gatt.writeCharacteristic(it.writeNoAnswerCharacteristic)
             } else {
                 it.writeCharacteristic.value = bytes
-                gatt.writeCharacteristic(it.writeCharacteristic)
+                return gatt.writeCharacteristic(it.writeCharacteristic)
             }
         }
     }
