@@ -20,7 +20,11 @@ class BlePairingCallbackFlow(
         override fun onReceive(context: Context, intent: Intent) {
             val device: BluetoothDevice = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE) ?: return
             if (!device.address.equals(deviceAddress, ignoreCase = true)) return
-            when (device.bondState) {
+            val bondState = intent.getIntExtra(
+                BluetoothDevice.EXTRA_BOND_STATE,
+                device.bondState,
+            )
+            when (bondState) {
                 BluetoothDevice.BOND_NONE -> pushEvent(BlePairingEvent.None)
                 BluetoothDevice.BOND_BONDING -> pushEvent(BlePairingEvent.Pairing)
                 BluetoothDevice.BOND_BONDED -> pushEvent(BlePairingEvent.Paired)

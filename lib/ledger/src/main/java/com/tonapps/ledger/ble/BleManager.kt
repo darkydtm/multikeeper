@@ -28,10 +28,10 @@ import com.tonapps.ledger.devices.Devices
 import com.tonapps.log.L
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
 import java.util.Date
@@ -45,11 +45,7 @@ class BleManager internal constructor(
     private val scope = Async.ioScope() + Job()
 
     private var isScanning: Boolean = false
-    private val _bleState = MutableSharedFlow<BleState>(
-        replay = 1,
-        onBufferOverflow = BufferOverflow.SUSPEND,
-        extraBufferCapacity = 64
-    )
+    private val _bleState = MutableStateFlow<BleState>(BleState.Idle)
 
     val bleState: Flow<BleState>
         get() = _bleState
@@ -164,10 +160,10 @@ class BleManager internal constructor(
                                     connectedDevice =
                                         connectedDevice.copy(serviceId = event.serviceUuid)
                                     connectionCallback?.onConnectionSuccess(connectedDevice)
-                                    _bleState.tryEmit(BleState.Connected(connectedDevice))
+                                    _bleState.value = BleState.Connected(connectedDevice)
                                 }
                                 is BleServiceEvent.BleDeviceDisconnected -> {
-                                    _bleState.tryEmit(BleState.Disconnected(event.error))
+                                    _bleState.value = BleState.Disconnected(event.error)
                                     disconnected(event.error)
                                 }
                                 is BleServiceEvent.SuccessSend -> {
@@ -295,7 +291,7 @@ class BleManager internal constructor(
                         onScanDevicesCallback?.invoke(scannedDevices)
                     }
 
-                    _bleState.tryEmit(BleState.Scanning(scannedDevices = scannedDevices))
+                    _bleState.value = BleState.Scanning(scannedDevices = scannedDevices)
                     delay(SCAN_THROTTLE_MS)
                 }
             }
