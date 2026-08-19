@@ -141,6 +141,7 @@ class BleManager internal constructor(
 
     // Bluetooth Service lifecycle.
     private var bluetoothService: BleService? = null
+    private var serviceEventsJob: Job? = null
     private lateinit var connectedDevice: BleDeviceModel
     var isConnected: Boolean = false
         private set
@@ -156,7 +157,8 @@ class BleManager internal constructor(
                     bleService.disconnectService(BleError.INITIALIZING_FAILED)
                 } else {
                     bleService.connect(connectedDevice.id)
-                    scope.launch {
+                    serviceEventsJob?.cancel()
+                    serviceEventsJob = scope.launch {
                         bleService.listenEvents().collect { event ->
                             when (event) {
                                 is BleServiceEvent.BleDeviceConnected -> {
@@ -471,6 +473,8 @@ class BleManager internal constructor(
 
     private fun disconnected(error: BleError? = null) {
         L.d("BleService disconnected")
+        serviceEventsJob?.cancel()
+        serviceEventsJob = null
         val callbacks = synchronized(pendingSendRequest) {
             pendingSendRequest.toList().also { pendingSendRequest.clear() }
         }

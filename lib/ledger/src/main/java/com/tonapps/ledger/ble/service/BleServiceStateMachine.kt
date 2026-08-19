@@ -83,7 +83,10 @@ class BleServiceStateMachine(
 
     fun build(context: Context) {
         val bluetoothGATT = device.connectGatt(context, false, gattCallbackFlow)
-        requireNotNull(bluetoothGATT)
+        if (bluetoothGATT == null) {
+            pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+            return
+        }
         timeoutJob = scope.launch {
             delay(CONNECT_TIMEOUT)
             _stateMachineFlow.tryEmit(BleServiceState.Error(BleError.CONNECTION_TIMEOUT))
@@ -105,9 +108,13 @@ class BleServiceStateMachine(
         this.isCleared = true
         _stateMachineFlow.resetReplayCache()
         scope.cancel()
-        pairingCallbackFlow.unbind()
-        this.gattInteractor.gatt.close()
-        this.gattInteractor.gatt.disconnect()
+        if (::pairingCallbackFlow.isInitialized) {
+            pairingCallbackFlow.unbind()
+        }
+        if (::gattInteractor.isInitialized) {
+            this.gattInteractor.gatt.disconnect()
+            this.gattInteractor.gatt.close()
+        }
     }
 
     fun sendApdu(apdu: ByteArray, beforeSend: ((String) -> Unit)? = null): String {

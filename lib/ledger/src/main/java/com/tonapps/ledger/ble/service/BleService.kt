@@ -74,6 +74,7 @@ class BleService : Service() {
         stateMachine?.clear()
         stateMachine = null
         gattCallback.clear()
+        isReady = false
 
         stopSelf()
         notify(BleServiceEvent.BleDeviceDisconnected(bleError))
@@ -86,9 +87,9 @@ class BleService : Service() {
         L.d("Connect to device address => $address.")
         listenningJob?.cancel()
         listenningJob = null
-        if (bluetoothDeviceAddress != null && address == bluetoothDeviceAddress && stateMachine != null) {
-            stateMachine?.clear()
-        }
+        stateMachine?.clear()
+        stateMachine = null
+        isReady = false
 
         val device: BluetoothDevice = bluetoothAdapter.getRemoteDevice(address)
 
