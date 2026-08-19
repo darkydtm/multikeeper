@@ -151,7 +151,9 @@ class BleServiceStateMachine(
 
                             this@BleServiceStateMachine.deviceService = deviceService
                             pushState(BleServiceState.NegotiatingMtu)
-                            gattInteractor.negotiateMtu()
+                            if (!gattInteractor.negotiateMtu()) {
+                                pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+                            }
                         } else {
                             _stateMachineFlow.tryEmit(BleServiceState.Error(BleError.SERVICE_NOT_FOUND))
                         }

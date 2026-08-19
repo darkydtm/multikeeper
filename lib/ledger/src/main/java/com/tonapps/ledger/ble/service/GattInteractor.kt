@@ -30,9 +30,9 @@ class GattInteractor(val gatt: BluetoothGatt) {
         return notificationEnabled && gatt.writeDescriptor(descriptor)
     }
 
-    fun negotiateMtu() {
+    fun negotiateMtu(): Boolean {
         L.d("Megociate MTU")
-        gatt.requestMtu(MAX_MTU_VALUE)
+        return gatt.requestMtu(MAX_MTU_VALUE)
     }
 
     fun askMtu(deviceService: BleDeviceService): Boolean {

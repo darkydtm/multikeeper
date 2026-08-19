@@ -84,6 +84,8 @@ class BleService : Service() {
         // Previously connected to the given device.
         // Try to reconnect.
         L.d("Connect to device address => $address.")
+        listenningJob?.cancel()
+        listenningJob = null
         if (bluetoothDeviceAddress != null && address == bluetoothDeviceAddress && stateMachine != null) {
             stateMachine?.clear()
         }
