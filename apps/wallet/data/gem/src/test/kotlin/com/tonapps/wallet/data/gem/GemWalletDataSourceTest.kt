@@ -119,6 +119,26 @@ class GemWalletDataSourceTest {
 	}
 
 	@Test
+	fun `portfolio reuses already loaded assets`() = runBlocking {
+		val backend = FakeGemBackend(
+			assets = listOf("ethereum_0xtoken"),
+			portfolio = GemPortfolioAssets(
+				totalValue = "1",
+				values = emptyList(),
+				allTimeHigh = null,
+				allTimeLow = null,
+				allocation = listOf(GemPortfolioAllocation("ethereum_0xtoken", 1f, "1")),
+			),
+		)
+		val source = GemWalletDataSource(backend)
+		val assets = source.getAssets(WalletId("wallet"), Chain.Ethereum).getOrThrow()
+
+		source.getPortfolio(WalletId("wallet"), Chain.Ethereum, assets).getOrThrow()
+
+		assertEquals(1, backend.assetRequests)
+	}
+
+	@Test
 	fun `smart chain uses backend smartchain identifier`() = runBlocking {
 		val source = GemWalletDataSource(FakeGemBackend(assets = listOf("smartchain")))
 
@@ -265,7 +285,12 @@ class GemWalletDataSourceTest {
 		private val transactions: GemTransactionsResponse? = null,
 		private val portfolio: GemPortfolioAssets? = null,
 	) : GemBackendReader {
-		override suspend fun getAssets(walletId: WalletId, fromTimestamp: Long): Result<List<String>> = Result.success(assets)
+		var assetRequests = 0
+
+		override suspend fun getAssets(walletId: WalletId, fromTimestamp: Long): Result<List<String>> {
+			assetRequests++
+			return Result.success(assets)
+		}
 
 		override suspend fun getTransactions(
 			walletId: WalletId,

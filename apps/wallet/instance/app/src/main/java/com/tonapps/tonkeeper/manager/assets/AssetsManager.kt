@@ -239,7 +239,7 @@ class AssetsManager(
 				incomplete = true
 				continue
 			}
-			val portfolio = gemWalletDataSource.getPortfolio(GemWalletId(wallet.id), chain)
+			val portfolio = gemWalletDataSource.getPortfolio(GemWalletId(wallet.id), chain, assets)
 				.getOrNull()
 				?.assets
 				?.associateBy { it.asset.id.value }

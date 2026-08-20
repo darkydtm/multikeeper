@@ -133,9 +133,13 @@ class GemRuntimeCoordinator(
 	}
 
 	fun start(scope: CoroutineScope) {
+		Log.d(LOG_TAG, "startup requested")
 		val startupId = synchronized(startedMonitor) {
 			if (activeStartupId != null) {
-				if (activeStartupOwner?.isCancelled != true) return
+				if (activeStartupOwner?.isCancelled != true) {
+					Log.d(LOG_TAG, "startup skipped active=$activeStartupId")
+					return
+				}
 				cancelStartup(activeStartupId!!)
 			}
 			nextStartupId++
@@ -149,14 +153,18 @@ class GemRuntimeCoordinator(
 				for (attempt in 0 until MAX_START_ATTEMPTS) {
 					if (!setStateIfCurrent(startupId, GemRuntimeState.Starting)) return@startup
 					try {
+						Log.d(LOG_TAG, "startup attempt=${attempt + 1} registration")
 						val registration = deviceRegistration.ensureRegistered()
 						if (registration.isFailure) {
+							Log.e(LOG_TAG, "startup registration failed", registration.exceptionOrNull())
 							lastError = registration.exceptionOrNull()
 						} else {
 							if (!isCurrentStartup(startupId)) return@startup
+							Log.d(LOG_TAG, "startup subscriptions")
 							val subscriptions = syncSubscriptions()
 							if (subscriptions.isSuccess) {
 								if (!isCurrentStartup(startupId)) return@startup
+								Log.d(LOG_TAG, "startup websocket")
 								val websocketJob = launch(start = CoroutineStart.UNDISPATCHED) {
 									try {
 										webSocketClient.connect().collect { event ->
@@ -184,6 +192,7 @@ class GemRuntimeCoordinator(
 								setRunningIfStarting(startupId)
 								return@startup
 							}
+							Log.e(LOG_TAG, "startup subscriptions failed", subscriptions.exceptionOrNull())
 							lastError = subscriptions.exceptionOrNull()
 						}
 					} catch (error: CancellationException) {
@@ -195,6 +204,7 @@ class GemRuntimeCoordinator(
 						delay(STARTUP_RETRY_DELAY_MS)
 					}
 				}
+				Log.e(LOG_TAG, "startup failed", lastError)
 				failStartup(startupId, lastError.toDiagnosticError())
 			} catch (error: CancellationException) {
 				cancelStartup(startupId)

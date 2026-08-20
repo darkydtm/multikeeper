@@ -111,8 +111,17 @@ class GemWalletDataSource(
 	private val transactionBridge: GemstoneTransactionBridge? = null,
 	private val tokenRepository: GemTokenRepository? = null,
 ) : WalletDataSource {
-	override suspend fun getPortfolio(walletId: WalletId, chain: Chain): Result<WalletPortfolio> = runRead(chain) {
-		val assets = getAssets(walletId, chain).getOrElse { return@runRead Result.failure(it) }
+	override suspend fun getPortfolio(walletId: WalletId, chain: Chain): Result<WalletPortfolio> =
+		getAssets(walletId, chain).fold(
+			onSuccess = { getPortfolio(walletId, chain, it) },
+			onFailure = { Result.failure(it) },
+		)
+
+	suspend fun getPortfolio(
+		walletId: WalletId,
+		chain: Chain,
+		assets: List<WalletAsset>,
+	): Result<WalletPortfolio> = runRead(chain) {
 		if (assets.any { it.balance.amount == null }) {
 			return@runRead unsupported()
 		}
