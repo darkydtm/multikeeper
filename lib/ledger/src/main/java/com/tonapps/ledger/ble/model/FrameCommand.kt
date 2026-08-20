@@ -39,6 +39,11 @@ class FrameCommand(
         fun fromHex(id: String, hexCommand: String): FrameCommand {
             L.d(hexCommand)
 
+            if (hexCommand.length < 8 || hexCommand.length % 2 != 0 ||
+                !hexCommand.startsWith(BleCommand.FRAME_PREFIX, ignoreCase = true)) {
+                throw IllegalArgumentException("Invalid BLE frame")
+            }
+
             var cursor = BleCommand.FRAME_PREFIX.length
             val indexString = hexCommand.substring(
                 startIndex = cursor,
@@ -50,17 +55,27 @@ class FrameCommand(
 
             //For first frame we got APDU total size
             val size = if (frameIndex == 0) {
+                if (hexCommand.length < cursor + SIZE_LENGTH) {
+                    throw IllegalArgumentException("Invalid BLE frame header")
+                }
                 val sizeString = hexCommand.substring(cursor, cursor + SIZE_LENGTH)
                 val size = sizeString.toInt(16)
                 cursor += SIZE_LENGTH
                 size
-            } else 0
+            } else {
+                0
+            }
 
             val apdu = hexCommand.substring(cursor)
+            val apduBytes = apdu.fromHexStringToBytes()
+            if ((frameIndex == 0 && (size < 2 || apduBytes.size > size)) ||
+                (frameIndex > 0 && apduBytes.isEmpty())) {
+                throw IllegalArgumentException("Invalid BLE frame payload")
+            }
 
             return FrameCommand(
                 id = id,
-                apdu = apdu.fromHexStringToBytes(),
+                apdu = apduBytes,
                 index = frameIndex,
                 size = size
             )

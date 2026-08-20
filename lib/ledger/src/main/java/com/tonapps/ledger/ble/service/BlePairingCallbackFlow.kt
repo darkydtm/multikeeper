@@ -7,45 +7,60 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import com.tonapps.ledger.ble.service.model.BlePairingEvent
-import com.tonapps.ledger.ble.service.model.GattCallbackEvent
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.runBlocking
 
 class BlePairingCallbackFlow(
-    private val context: Context
+    private val context: Context,
+    private val deviceAddress: String,
+    private val connectionGeneration: Long,
+    private val onEvent: (BlePairingEvent) -> Unit,
 ) {
     private val pairingReceiver: BroadcastReceiver = object : BroadcastReceiver() {
         @SuppressLint("MissingPermission")
         override fun onReceive(context: Context, intent: Intent) {
-            val device: BluetoothDevice = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)!!
-            when (device.bondState) {
-                BluetoothDevice.BOND_NONE -> pushEvent(BlePairingEvent.None)
-                BluetoothDevice.BOND_BONDING -> pushEvent(BlePairingEvent.Pairing)
-                BluetoothDevice.BOND_BONDED -> pushEvent(BlePairingEvent.Paired)
+            val device: BluetoothDevice = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE) ?: return
+            if (!device.address.equals(deviceAddress, ignoreCase = true)) return
+            val bondState = intent.getIntExtra(
+                BluetoothDevice.EXTRA_BOND_STATE,
+                device.bondState,
+            )
+            when (bondState) {
+                BluetoothDevice.BOND_NONE -> pushEvent(BlePairingEvent.None(connectionGeneration))
+                BluetoothDevice.BOND_BONDING -> pushEvent(BlePairingEvent.Pairing(connectionGeneration))
+                BluetoothDevice.BOND_BONDED -> pushEvent(BlePairingEvent.Paired(connectionGeneration))
             }
         }
     }
 
-    private val _gattFlow =
-        MutableSharedFlow<BlePairingEvent>(replay = 1, extraBufferCapacity = 0)
-    val gattFlow: Flow<BlePairingEvent>
-        get() = _gattFlow
+    private var isBound = false
+
+    @Volatile
+    var isPairing = false
+        private set
 
     fun bind() {
+        if (isBound) return
         context.registerReceiver(
             pairingReceiver,
-            IntentFilter("android.bluetooth.device.action.PAIRING_REQUEST")
+            IntentFilter().apply {
+                addAction("android.bluetooth.device.action.PAIRING_REQUEST")
+                addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+            }
         )
+        isBound = true
     }
 
     fun unbind() {
+        if (!isBound) return
         context.unregisterReceiver(pairingReceiver)
+        isBound = false
     }
 
     private fun pushEvent(event: BlePairingEvent) {
-        runBlocking {
-            _gattFlow.emit(event)
+        isPairing = when (event) {
+            is BlePairingEvent.None -> isPairing
+            is BlePairingEvent.Pairing -> true
+            is BlePairingEvent.Paired -> false
         }
+        onEvent(event)
     }
 }

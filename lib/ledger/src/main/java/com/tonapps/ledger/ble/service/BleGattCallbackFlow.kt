@@ -8,22 +8,76 @@ import android.bluetooth.BluetoothProfile
 import com.tonapps.ledger.ble.extension.toHexString
 import com.tonapps.ledger.ble.service.model.GattCallbackEvent
 import com.tonapps.log.L
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.receiveAsFlow
+import java.util.IdentityHashMap
+import java.util.WeakHashMap
 
 class BleGattCallbackFlow : BluetoothGattCallback() {
 
-    private val _gattFlow =
-        MutableSharedFlow<GattCallbackEvent>(replay = 1, extraBufferCapacity = 0)
+    private var gattChannel = Channel<GattCallbackEvent>(Channel.UNLIMITED)
     val gattFlow: Flow<GattCallbackEvent>
-        get() = _gattFlow
+        get() = gattChannel.receiveAsFlow()
+    private var deviceAddress: String? = null
+    private var activeGatt: BluetoothGatt? = null
+    private var discoveredGatt: BluetoothGatt? = null
+    private var connectionGeneration = 0L
+    private val retiredGatts = WeakHashMap<BluetoothGatt, Unit>()
+    private val pendingEvents = IdentityHashMap<BluetoothGatt, MutableList<GattCallbackEvent>>()
+    private val pendingDiscovery = IdentityHashMap<BluetoothGatt, Unit>()
 
-    private var hasDiscoveredService: Boolean = false
+    @Synchronized
+    fun bind(address: String): Long {
+        connectionGeneration++
+        deviceAddress = address
+        activeGatt?.let { retiredGatts[it] = Unit }
+        pendingEvents.keys.forEach { retiredGatts[it] = Unit }
+        pendingDiscovery.keys.forEach { retiredGatts[it] = Unit }
+        activeGatt = null
+        discoveredGatt = null
+        pendingEvents.clear()
+        pendingDiscovery.clear()
+        gattChannel.close()
+        gattChannel = Channel(Channel.UNLIMITED)
+        return connectionGeneration
+    }
 
-    private fun pushEvent(event: GattCallbackEvent) {
-        runBlocking {
-            _gattFlow.emit(event)
+    fun attach(gatt: BluetoothGatt, generation: Long) {
+        synchronized(this) {
+            if (generation != connectionGeneration ||
+                !gatt.device.address.equals(deviceAddress, ignoreCase = true) ||
+                retiredGatts.containsKey(gatt)
+            ) {
+                return
+            }
+            activeGatt = gatt
+            val events = pendingEvents.remove(gatt).orEmpty()
+            if (pendingDiscovery.remove(gatt) != null) {
+                discoveredGatt = gatt
+            }
+            events.forEach { gattChannel.trySend(it) }
+        }
+    }
+
+    private fun publish(gatt: BluetoothGatt, event: (Long) -> GattCallbackEvent) {
+        synchronized(this) {
+            publishLocked(gatt, event)
+        }
+    }
+
+    private fun publishLocked(gatt: BluetoothGatt, event: (Long) -> GattCallbackEvent) {
+        if (!gatt.device.address.equals(deviceAddress, ignoreCase = true) ||
+            (activeGatt != null && activeGatt !== gatt) ||
+            retiredGatts.containsKey(gatt)
+        ) {
+            return
+        }
+        val callbackEvent = event(connectionGeneration)
+        if (activeGatt === gatt) {
+            gattChannel.trySend(callbackEvent)
+        } else {
+            pendingEvents.getOrPut(gatt) { mutableListOf() }.add(callbackEvent)
         }
     }
 
@@ -31,10 +85,10 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         L.d("GATT connection state change. state: $newState, status: $status")
         when (newState) {
             BluetoothProfile.STATE_CONNECTED -> {
-                pushEvent(GattCallbackEvent.ConnectionState.Connected)
+                publish(gatt) { GattCallbackEvent.ConnectionState.Connected(status, it) }
             }
             BluetoothProfile.STATE_DISCONNECTED -> {
-                pushEvent(GattCallbackEvent.ConnectionState.Disconnected)
+                publish(gatt) { GattCallbackEvent.ConnectionState.Disconnected(status, it) }
             }
         }
     }
@@ -45,26 +99,37 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
     ) {
         L.d("------------- onServicesDiscovered status: $status")
         if (status == BluetoothGatt.GATT_SUCCESS) {
-            hasDiscoveredService = true
-            pushEvent(
-                GattCallbackEvent.ServicesDiscovered(gatt.services)
-            )
+            synchronized(this) {
+                if (gatt.device.address.equals(deviceAddress, ignoreCase = true) &&
+                    (activeGatt == null || activeGatt === gatt) &&
+                    !retiredGatts.containsKey(gatt)
+                ) {
+                    pendingDiscovery[gatt] = Unit
+                    publishLocked(gatt) { GattCallbackEvent.ServicesDiscovered(gatt.services, it) }
+                }
+            }
         } else {
             L.w("onServicesDiscovered received: $status")
-            pushEvent(GattCallbackEvent.ConnectionState.Disconnected)
+            publish(gatt) { GattCallbackEvent.ConnectionState.Disconnected(status, it) }
         }
     }
 
     override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
         super.onMtuChanged(gatt, mtu, status)
+        if (gatt == null) return
         //Seems that the callback can be reached without calling gatt.requestMtu(...)
-        if (hasDiscoveredService) {
+        val discovered = synchronized(this) {
+            discoveredGatt === gatt || pendingDiscovery.containsKey(gatt)
+        }
+        if (discovered) {
             L.d("------------ onMtuChanged => MTU new size: $mtu")
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                pushEvent(GattCallbackEvent.MtuNegociated(mtu - GattInteractor.GATT_HEADER_SIZE))
+                publish(gatt) {
+                    GattCallbackEvent.MtuNegociated(mtu - GattInteractor.GATT_HEADER_SIZE, it)
+                }
             } else {
                 L.w("onMtuChanged error with status : $status")
-                pushEvent(GattCallbackEvent.ConnectionState.Disconnected)
+                publish(gatt) { GattCallbackEvent.ConnectionState.Disconnected(status, it) }
             }
         }
     }
@@ -76,7 +141,9 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
     ) {
         super.onDescriptorWrite(gatt, descriptor, status)
         L.d("------------- onDescriptorWrite status: $status")
-        pushEvent(GattCallbackEvent.WriteDescriptorAck(status == BluetoothGatt.GATT_SUCCESS))
+        publish(gatt) {
+            GattCallbackEvent.WriteDescriptorAck(descriptor?.uuid, status == BluetoothGatt.GATT_SUCCESS, it)
+        }
     }
 
     override fun onCharacteristicWrite(
@@ -85,7 +152,14 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         status: Int
     ) {
         L.d("------------- onCharacteristicWrite status: $status")
-        pushEvent(GattCallbackEvent.WriteCharacteristicAck(status == BluetoothGatt.GATT_SUCCESS))
+        publish(gatt) {
+            GattCallbackEvent.WriteCharacteristicAck(
+                characteristic.uuid,
+                status == BluetoothGatt.GATT_SUCCESS,
+                characteristic.value?.copyOf() ?: ByteArray(0),
+                it,
+            )
+        }
 
     }
 
@@ -94,12 +168,25 @@ class BleGattCallbackFlow : BluetoothGattCallback() {
         characteristic: BluetoothGattCharacteristic
     ) {
         L.d("------------- onCharacteristicChanged status: ${characteristic.value.toHexString()}")
-        pushEvent(GattCallbackEvent.CharacteristicChanged(characteristic.value))
+        publish(gatt) {
+            GattCallbackEvent.CharacteristicChanged(
+                characteristic.uuid,
+                characteristic.value?.copyOf() ?: ByteArray(0),
+                it,
+            )
+        }
     }
 
+    @Synchronized
     fun clear() {
-        hasDiscoveredService = false
-        _gattFlow.resetReplayCache()
+        deviceAddress = null
+        activeGatt?.let { retiredGatts[it] = Unit }
+        pendingEvents.keys.forEach { retiredGatts[it] = Unit }
+        pendingDiscovery.keys.forEach { retiredGatts[it] = Unit }
+        activeGatt = null
+        discoveredGatt = null
+        pendingEvents.clear()
+        pendingDiscovery.clear()
+        gattChannel.close()
     }
 }
-

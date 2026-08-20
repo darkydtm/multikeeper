@@ -15,7 +15,8 @@ import com.tonapps.log.L
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -42,7 +43,7 @@ class BleService : Service() {
     private val gattCallback = BleGattCallbackFlow()
     private var stateMachine: BleServiceStateMachine? = null
 
-    private val events: MutableSharedFlow<BleServiceEvent> = MutableSharedFlow(0, 1)
+    private val events = Channel<BleServiceEvent>(Channel.UNLIMITED)
 
     var isReady = false
 
@@ -69,39 +70,52 @@ class BleService : Service() {
         }
     }
 
+    @Synchronized
     fun disconnectService(bleError: BleError? = null) {
         listenningJob?.cancel()
         stateMachine?.clear()
         stateMachine = null
         gattCallback.clear()
+        isReady = false
+        bluetoothDeviceAddress = null
 
         stopSelf()
         notify(BleServiceEvent.BleDeviceDisconnected(bleError))
     }
 
 
+    @Synchronized
     fun connect(address: String): Boolean {
         // Previously connected to the given device.
         // Try to reconnect.
         L.d("Connect to device address => $address.")
-        if (bluetoothDeviceAddress != null && address == bluetoothDeviceAddress && stateMachine != null) {
-            stateMachine?.clear()
-        }
+        listenningJob?.cancel()
+        listenningJob = null
+        stateMachine?.clear()
+        stateMachine = null
+        isReady = false
 
-        val device: BluetoothDevice = bluetoothAdapter.getRemoteDevice(address)
+        return try {
+            val device: BluetoothDevice = bluetoothAdapter.getRemoteDevice(address)
 
         // We want to directly connect to the device, so we are setting the autoConnect
         // parameter to false.
+        val connectionGeneration = gattCallback.bind(address)
         stateMachine = BleServiceStateMachine(
             gattCallback,
             address,
-            device
+            device,
+            connectionGeneration
         )
+        bluetoothDeviceAddress = address
         observeStateMachine()
         stateMachine?.build(this.applicationContext)
-        bluetoothDeviceAddress = address
 
-        return true
+            true
+        } catch (_: Exception) {
+            disconnectService(BleError.INTERNAL_STATE)
+            false
+        }
     }
 
     private fun observeStateMachine() {
@@ -134,21 +148,21 @@ class BleService : Service() {
     }
 
     private fun notify(event: BleServiceEvent) {
-        events.tryEmit(event)
+        events.trySend(event)
     }
 
     fun listenEvents(): Flow<BleServiceEvent> {
-        return events
+        return events.receiveAsFlow()
     }
 
     @Synchronized
-    fun sendApdu(apdu: ByteArray): String {
+    fun sendApdu(apdu: ByteArray, beforeSend: ((String) -> Unit)? = null): String {
         L.d("Send APDU")
-        if (bluetoothDeviceAddress == null) {
-            disconnectService(BleError.NO_DEVICE_ADDRESS)
+        if (bluetoothDeviceAddress == null || stateMachine == null) {
+            throw IllegalStateException("Bluetooth device not connected, please use connect before")
         }
 
-        return stateMachine!!.sendApdu(apdu)
+        return stateMachine!!.sendApdu(apdu, beforeSend)
     }
 
     companion object {

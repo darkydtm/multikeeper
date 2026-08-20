@@ -36,7 +36,7 @@ fun UsbDeviceConnection.writeByBulk(endpoint: UsbEndpoint, bytes: ByteArray) {
     while (count > 0) {
         val l = min(endpoint.maxPacketSize, count)
         val snd = bulkTransfer(endpoint, bytes, offset, l, 50)
-        if (snd < 0) {
+        if (snd <= 0) {
             throw LedgerException.USBWriteException
         }
         count -= snd

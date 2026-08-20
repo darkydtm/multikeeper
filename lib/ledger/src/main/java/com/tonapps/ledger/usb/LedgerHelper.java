@@ -8,8 +8,11 @@ public class LedgerHelper {
 
     public static byte[] wrapCommandAPDU(int channel, byte[] command, int packetSize) throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        if (packetSize < 3) {
-            throw new Exception("Can't handle Ledger framing with less than 3 bytes for the report");
+        if (command == null || command.length > 0xffff) {
+            throw new Exception("Invalid APDU length");
+        }
+        if (packetSize < 7) {
+            throw new Exception("Can't handle Ledger framing with less than 7 bytes for the report");
         }
         int sequenceIdx = 0;
         int offset = 0;
@@ -47,13 +50,16 @@ public class LedgerHelper {
         int offset = 0;
         int responseLength;
         int sequenceIdx = 0;
-        if ((data == null) || (data.length < 7 + 5)) {
+        if (packetSize < 7 || (data == null) || (data.length < 7)) {
             return null;
         }
-        if (data[offset++] != (channel >> 8)) {
+        if (data.length % packetSize != 0) {
+            throw new Exception("Invalid packet length");
+        }
+        if (data[offset++] != (byte) (channel >> 8)) {
             throw new Exception("Invalid channel");
         }
-        if (data[offset++] != (channel & 0xff)) {
+        if (data[offset++] != (byte) (channel & 0xff)) {
             throw new Exception("Invalid channel");
         }
         if (data[offset++] != TAG_APDU) {
@@ -67,6 +73,9 @@ public class LedgerHelper {
         }
         responseLength = ((data[offset++] & 0xff) << 8);
         responseLength |= (data[offset++] & 0xff);
+        if (responseLength < 2) {
+            throw new Exception("Invalid response length");
+        }
         if (data.length < 7 + responseLength) {
             return null;
         }
@@ -78,10 +87,10 @@ public class LedgerHelper {
             if (offset == data.length) {
                 return null;
             }
-            if (data[offset++] != (channel >> 8)) {
+            if (data[offset++] != (byte) (channel >> 8)) {
                 throw new Exception("Invalid channel");
             }
-            if (data[offset++] != (channel & 0xff)) {
+            if (data[offset++] != (byte) (channel & 0xff)) {
                 throw new Exception("Invalid channel");
             }
             if (data[offset++] != TAG_APDU) {
@@ -99,6 +108,9 @@ public class LedgerHelper {
             }
             response.write(data, offset, blockSize);
             offset += blockSize;
+        }
+        if (offset > data.length) {
+            return null;
         }
         return response.toByteArray();
     }
