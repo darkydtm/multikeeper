@@ -32,6 +32,7 @@ import com.tonapps.wallet.data.rn.data.RNWallet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.filterNotNull
@@ -70,6 +71,8 @@ class AccountRepository(
     private val migrationHelper = RNMigrationHelper(rnLegacy)
 
     private val _selectedStateFlow = MutableStateFlow<SelectedState>(SelectedState.Initialization)
+    private val _walletLifecycleGeneration = MutableStateFlow(0L)
+    val walletLifecycleGeneration = _walletLifecycleGeneration.asStateFlow()
     val selectedStateFlow = _selectedStateFlow.stateIn(
         scope,
         SharingStarted.Eagerly,
@@ -487,6 +490,7 @@ class AccountRepository(
     }
 
     suspend fun setSelectedWallet(id: String?) {
+        _walletLifecycleGeneration.value++
         storageSource.setSelectedId(id)
         if (id == null) {
             _selectedStateFlow.value = SelectedState.Empty
