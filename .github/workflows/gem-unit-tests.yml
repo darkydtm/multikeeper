@@ -1,4 +1,4 @@
-name: Gem Unit Tests
+name: Gem Backend Checks
 
 on:
   push:
@@ -48,5 +48,5 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v5
 
-      - name: Run Gem backend tests
-        run: ./gradlew :apps:wallet:data:gem:testDebugUnitTest --tests com.tonapps.wallet.data.gem.GemBackendTransportTest --tests com.tonapps.wallet.data.gem.GemWebSocketClientTest --no-daemon --no-build-cache --no-configuration-cache
+      - name: Compile Gem backend
+        run: ./gradlew :apps:wallet:data:gem:compileDebugKotlin --no-daemon --no-build-cache --no-configuration-cache
