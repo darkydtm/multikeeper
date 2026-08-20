@@ -352,3 +352,4 @@ data class ConfigEntity(
 		}
     }
 }
+}
