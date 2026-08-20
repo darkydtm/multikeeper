@@ -178,6 +178,7 @@ val gemModule = module {
 			priceAssets = listOf("bitcoin", "ethereum", "smartchain", "solana"),
 		)
 	}
+	single<GemWebSocketSource> { get<GemWebSocketClient>() }
 	single { GemSubscriptionRepository(get<GemSubscriptionBackend>()) }
 	single { GemAuthoritativeRefreshStore(get<GemBackendReader>()) }
 	single<GemAuthoritativeRefresh> { get<GemAuthoritativeRefreshStore>() }
