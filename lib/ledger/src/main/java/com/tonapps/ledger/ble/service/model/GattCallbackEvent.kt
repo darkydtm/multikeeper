@@ -9,15 +9,15 @@ sealed class GattCallbackEvent {
 
     sealed class ConnectionState(
         val status: Int,
-        override val generation: Long,
+        open override val generation: Long,
     ): GattCallbackEvent(), GenerationAware {
         data class Connected(
             val callbackStatus: Int,
-            generation: Long,
+            override val generation: Long,
         ): ConnectionState(callbackStatus, generation)
         data class Disconnected(
             val callbackStatus: Int,
-            generation: Long,
+            override val generation: Long,
         ): ConnectionState(callbackStatus, generation)
     }
 
