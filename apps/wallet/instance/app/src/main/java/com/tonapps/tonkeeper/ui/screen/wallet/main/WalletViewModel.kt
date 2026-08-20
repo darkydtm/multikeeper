@@ -1,6 +1,7 @@
 package com.tonapps.tonkeeper.ui.screen.wallet.main
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.viewModelScope
 import com.tonapps.blockchain.model.legacy.Wallet
 import com.tonapps.blockchain.model.legacy.WalletCurrency
@@ -159,6 +160,7 @@ class WalletViewModel(
 						val events = delivery.events.filterIsInstance<GemRefreshEvent.Balances>()
 							.filter { event -> wallet.isGem && event.walletId.value == wallet.id }
 						if (events.isNotEmpty()) {
+							Log.d(LOG_TAG, "initial balance refresh events=${events.size}")
 							gemRefreshLock.withLock {
 								val generation = ++gemRefreshGeneration
 								events.flatMap { it.chains }.forEach { chain -> gemRefreshChains[chain] = generation }
@@ -169,6 +171,7 @@ class WalletViewModel(
 					is GemRefreshDelivery.Live -> {
 						val event = delivery.event as? GemRefreshEvent.Balances
 						if (wallet.isGem && event?.walletId?.value == wallet.id) {
+							Log.d(LOG_TAG, "live balance refresh chains=${event.chains.size}")
 							gemRefreshLock.withLock {
 								val generation = ++gemRefreshGeneration
 								event.chains.forEach { chain -> gemRefreshChains[chain] = generation }
@@ -366,8 +369,9 @@ class WalletViewModel(
         }
     }
 
-    fun refresh() {
-        requestDnsExpiring()
+	fun refresh() {
+		Log.d(LOG_TAG, "wallet refresh requested")
+		requestDnsExpiring()
         _statusFlow.value = Status.Updating
         _lastLtFlow.value += 1
     }
@@ -518,6 +522,7 @@ class WalletViewModel(
     }
 
 	companion object {
+		private const val LOG_TAG = "GemWallet"
 		private const val CACHE_NAME = "wallet"
 
         private fun getCurrency(

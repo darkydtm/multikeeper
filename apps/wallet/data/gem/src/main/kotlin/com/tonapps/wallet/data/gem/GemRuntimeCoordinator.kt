@@ -1,5 +1,6 @@
 package com.tonapps.wallet.data.gem
 
+import android.util.Log
 import java.io.IOException
 import java.util.LinkedHashMap
 import java.util.concurrent.CancellationException
@@ -311,7 +312,9 @@ class GemRuntimeCoordinator(
 		}
 		when (event) {
 			is GemWebSocketEvent.Prices -> Unit
-			is GemWebSocketEvent.Balances -> event.updates
+			is GemWebSocketEvent.Balances -> {
+				Log.d(LOG_TAG, "processing balance event updates=${event.updates.size}")
+				event.updates
 				.groupBy { WalletId(it.walletId) }
 				.forEach { (walletId, updates) ->
 					val chains = updates.mapNotNull { update ->
@@ -320,9 +323,11 @@ class GemRuntimeCoordinator(
 						}
 					}.toSet()
 					if (chains.isNotEmpty()) {
+						Log.d(LOG_TAG, "emitting balance refresh updates=${updates.size} chains=${chains.size}")
 						emitRefreshEvent(GemRefreshEvent.Balances(walletId, chains))
 					}
 				}
+			}
 			is GemWebSocketEvent.Transactions -> {
 				if (event.transactionIds.isNotEmpty()) {
 					emitRefreshEvent(
@@ -339,6 +344,7 @@ class GemRuntimeCoordinator(
 	}
 
 	private companion object {
+		const val LOG_TAG = "GemRuntime"
 		const val MAX_START_ATTEMPTS = 3
 		const val STARTUP_RETRY_DELAY_MS = 1_000L
 	}

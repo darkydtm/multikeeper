@@ -1,5 +1,6 @@
 package com.tonapps.wallet.data.gem
 
+import android.util.Log
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.currentCoroutineContext
@@ -91,18 +92,25 @@ class GemWebSocketClient(
 	}
 
 	private suspend fun observeSession(onOpen: () -> Unit): Flow<GemWebSocketEvent> = callbackFlow {
+		Log.d(LOG_TAG, "stream connect url=${streamUrl()}")
 		val request = Request.Builder()
 			.url(streamUrl())
 			.header("Authorization", signer.sign("GET", STREAM_PATH, ByteArray(0), ""))
 			.build()
 		val webSocket = webSocketClient.newWebSocket(request, object : WebSocketListener() {
-			override fun onOpen(webSocket: WebSocket, response: Response) {
+			 override fun onOpen(webSocket: WebSocket, response: Response) {
+				Log.d(LOG_TAG, "stream opened code=${response.code}")
 				priceSubscriptionMessage(priceAssets)?.let(webSocket::send)
 				onOpen()
 			}
 
 			override fun onMessage(webSocket: WebSocket, text: String) {
-				parseEvent(text).onSuccess { trySend(it) }
+				parseEvent(text)
+					.onSuccess {
+						Log.d(LOG_TAG, "stream event type=${it::class.simpleName}")
+						trySend(it)
+					}
+					.onFailure { error -> Log.e(LOG_TAG, "stream event parse failed", error) }
 			}
 
 			override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -110,10 +118,12 @@ class GemWebSocketClient(
 			}
 
 			override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+				Log.d(LOG_TAG, "stream closed code=$code reason=$reason")
 				close()
 			}
 
 			override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+				Log.e(LOG_TAG, "stream failure code=${response?.code}", t)
 				close(t)
 			}
 		})
@@ -131,6 +141,7 @@ class GemWebSocketClient(
 			.toString()
 
 	companion object {
+		private const val LOG_TAG = "GemStream"
 		private const val STREAM_PATH = "/v2/devices/stream"
 		private const val PING_INTERVAL_MS = 30_000L
 		private const val INITIAL_RECONNECT_DELAY_MS = 1_000L
