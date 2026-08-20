@@ -22,6 +22,15 @@ import org.junit.Test
 
 class GemBackendTransportTest {
 	@Test
+	fun `gem http client has finite transport timeouts`() {
+		val client = gemHttpClient()
+
+		assertEquals(30_000, client.connectTimeoutMillis)
+		assertEquals(30_000, client.readTimeoutMillis)
+		assertEquals(30_000, client.writeTimeoutMillis)
+	}
+
+	@Test
 	fun `gem node token is scoped to the trusted HTTPS host`() {
 		val trustedBaseUrl = "https://gemnodes.com".toHttpUrl()
 

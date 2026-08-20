@@ -6,6 +6,7 @@ import com.tonapps.core.flags.GemWalletEnvironment
 import com.tonapps.security.Security
 import com.tonapps.security.SecurityStorageBox
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
@@ -25,6 +26,12 @@ private const val GEM_GATEWAY_PREFERENCES = "gemGatewayPreferences"
 private const val GEM_GATEWAY_SECURE_PREFERENCES = "gemGatewaySecurePreferences"
 private const val GEM_NODE_TOKEN_STORAGE = "gemNodeTokenStorage"
 
+internal fun gemHttpClient(): OkHttpClient = OkHttpClient.Builder()
+	.connectTimeout(30, TimeUnit.SECONDS)
+	.readTimeout(30, TimeUnit.SECONDS)
+	.writeTimeout(30, TimeUnit.SECONDS)
+	.build()
+
 internal fun Locale.toGemLocale(): String {
 	val tag = toLanguageTag()
 	if (tag == "pt-BR" || tag == "pt_BR") {
@@ -38,7 +45,7 @@ internal fun Locale.toGemLocale(): String {
 
 val gemModule = module {
 	// Use a minimal isolated client because the existing DI graph exposes no configured OkHttp binding.
-	single(named(GEM_HTTP_CLIENT)) { OkHttpClient.Builder().build() }
+	single(named(GEM_HTTP_CLIENT)) { gemHttpClient() }
 
 	single {
 		val context: Context = get()
