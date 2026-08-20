@@ -1,5 +1,7 @@
 package com.tonapps.wallet.data.gem
 
+import android.os.SystemClock
+import android.util.Log
 import java.io.IOException
 import java.util.concurrent.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -133,8 +135,15 @@ class GemBackendClient(
 		noinline notFound: (() -> R)? = null,
 		crossinline map: (T) -> R,
 	): Result<R> = withContext(Dispatchers.IO) {
+		val startedAt = SystemClock.elapsedRealtime()
+		Log.d(LOG_TAG, "request start method=${request.method} path=${request.url.encodedPath}")
 		try {
 			signedClient.newCall(request).execute().use { response ->
+				Log.d(
+					LOG_TAG,
+					"response received method=${request.method} path=${request.url.encodedPath} " +
+						"code=${response.code} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}",
+				)
 				val body = response.body?.string().orEmpty()
 				if (!response.isSuccessful) {
 					if (response.code == 404 && notFound != null) {
@@ -147,12 +156,16 @@ class GemBackendClient(
 		} catch (error: CancellationException) {
 			throw error
 		} catch (error: GemBackendException) {
+			Log.e(LOG_TAG, "request failed path=${request.url.encodedPath} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}", error)
 			Result.failure(error)
 		} catch (error: IOException) {
+			Log.e(LOG_TAG, "request IO failure path=${request.url.encodedPath} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}", error)
 			Result.failure(GemBackendException(null, GemError.NetworkUnavailable()))
 		} catch (error: SerializationException) {
+			Log.e(LOG_TAG, "response decode failure path=${request.url.encodedPath} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}", error)
 			Result.failure(GemBackendException(null, GemError.BackendRejected("invalid_response")))
 		} catch (error: Exception) {
+			Log.e(LOG_TAG, "request unexpected failure path=${request.url.encodedPath} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}", error)
 			Result.failure(GemBackendException(null, GemError.BackendRejected("invalid_response")))
 		}
 	}
@@ -160,6 +173,7 @@ class GemBackendClient(
 	private inline fun <reified T> jsonBody(value: T) = json.encodeToString(value).toRequestBody(JSON_MEDIA_TYPE)
 
 	private companion object {
+		const val LOG_TAG = "GemBackend"
 		val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 	}
 }

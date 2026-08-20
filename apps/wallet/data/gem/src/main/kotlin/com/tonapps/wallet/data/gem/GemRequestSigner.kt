@@ -1,5 +1,6 @@
 package com.tonapps.wallet.data.gem
 
+import android.util.Log
 import com.tonapps.security.SecurityStorageBox
 import okhttp3.Interceptor
 import okhttp3.Response
@@ -36,6 +37,7 @@ class GemRequestSignerInterceptor(
 ) : Interceptor {
 	override fun intercept(chain: Interceptor.Chain): Response {
 		val request = chain.request()
+		Log.d(LOG_TAG, "sign start method=${request.method} path=${request.url.encodedPath}")
 		val body = request.body?.let {
 			val buffer = Buffer()
 			it.writeTo(buffer)
@@ -47,7 +49,16 @@ class GemRequestSignerInterceptor(
 			exactBodyBytes = body,
 			walletId = request.tag(GemWalletId::class.java)?.value.orEmpty(),
 		)
-		return chain.proceed(request.newBuilder().header("Authorization", authorization).build())
+		Log.d(LOG_TAG, "sign complete method=${request.method} path=${request.url.encodedPath}")
+		return try {
+			chain.proceed(request.newBuilder().header("Authorization", authorization).build())
+		} finally {
+			Log.d(LOG_TAG, "request chain completed method=${request.method} path=${request.url.encodedPath}")
+		}
+	}
+
+	private companion object {
+		const val LOG_TAG = "GemBackend"
 	}
 }
 

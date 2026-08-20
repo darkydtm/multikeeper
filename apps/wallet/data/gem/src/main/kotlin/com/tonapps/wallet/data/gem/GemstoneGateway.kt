@@ -1,5 +1,7 @@
 package com.tonapps.wallet.data.gem
 
+import android.os.SystemClock
+import android.util.Log
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +39,8 @@ class GemstoneAlienProvider(
 	override fun getEndpoint(chain: GemChain): String = "$baseUrl/${chain.trimStart('/')}"
 
 	override suspend fun request(target: AlienTarget): AlienResponse = withContext(Dispatchers.IO) {
+		val startedAt = SystemClock.elapsedRealtime()
+		Log.d(LOG_TAG, "node request start method=${target.method} url=${target.url}")
 		val request = Request.Builder()
 			.url(target.url)
 			.method(target.method.name, target.body?.toRequestBody())
@@ -53,6 +57,7 @@ class GemstoneAlienProvider(
 			}
 			val response = credentialedClient.newCall(request.withGemNodeToken(token, trustedBaseUrl)).execute()
 			val retriedResponse = if (response.code == 401 && tokenProvider != null && token != null) {
+				Log.d(LOG_TAG, "node response code=401, refreshing token url=${target.url}")
 				response.close()
 				tokenProvider.invalidate(token)
 				credentialedClient.newCall(request.withGemNodeToken(tokenProvider.getToken(), trustedBaseUrl)).execute()
@@ -60,13 +65,23 @@ class GemstoneAlienProvider(
 				response
 			}
 			retriedResponse.use { response ->
+				Log.d(
+					LOG_TAG,
+					"node response code=${response.code} url=${target.url} " +
+						"elapsedMs=${SystemClock.elapsedRealtime() - startedAt}",
+				)
 				AlienResponse(response.code.toUShort(), response.body?.bytes() ?: ByteArray(0))
 			}
 		} catch (error: CancellationException) {
 			throw error
 		} catch (error: IOException) {
+			Log.e(LOG_TAG, "node IO failure url=${target.url} elapsedMs=${SystemClock.elapsedRealtime() - startedAt}", error)
 			throw AlienException.RequestException(error.message.orEmpty())
 		}
+	}
+
+	private companion object {
+		const val LOG_TAG = "GemNode"
 	}
 }
 
