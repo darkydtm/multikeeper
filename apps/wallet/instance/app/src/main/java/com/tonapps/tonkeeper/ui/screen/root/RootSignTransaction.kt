@@ -7,7 +7,8 @@ import com.tonapps.wallet.data.dapps.entities.AppConnectEntity
 data class RootSignTransaction(
     val connection: AppConnectEntity,
     val message: BridgeEvent.Message,
-    val returnUri: Uri?
+    val returnUri: Uri?,
+    val returnPackageName: String?
 ) {
 
     val hash: String

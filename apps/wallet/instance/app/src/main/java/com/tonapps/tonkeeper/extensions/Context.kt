@@ -23,7 +23,7 @@ import androidx.work.WorkManager
 import com.tonapps.blockchain.ton.contract.WalletVersion
 import com.tonapps.extensions.bestMessage
 import com.tonapps.tonkeeper.koin.settingsRepository
-import com.tonapps.tonkeeper.manager.tonconnect.TonConnectManager
+import com.tonapps.tonkeeper.manager.tonconnect.TonConnect
 import com.tonapps.tonkeeperx.BuildConfig
 import com.tonapps.uikit.color.accentGreenColor
 import com.tonapps.uikit.color.accentRedColor
@@ -59,12 +59,13 @@ val Context.isDarkMode: Boolean
 val Context.isLightTheme: Boolean
 	get() = settingsRepository?.isLightTheme ?: false
 
-fun Context.safeExternalOpenUri(uri: Uri) {
-    if (TonConnectManager.isTonConnectDeepLink(uri)) {
+fun Context.safeExternalOpenUri(uri: Uri, packageName: String? = null) {
+    if (!TonConnect.isSafeReturnUri(uri)) {
         return
     }
     try {
         val intent = Intent(Intent.ACTION_VIEW, uri)
+        packageName?.let { intent.setPackage(it) }
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         startActivity(intent)
     } catch (e: Throwable) {

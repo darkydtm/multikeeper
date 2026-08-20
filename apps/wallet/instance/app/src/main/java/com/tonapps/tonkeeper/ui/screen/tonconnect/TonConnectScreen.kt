@@ -26,6 +26,7 @@ import com.tonapps.extensions.short4
 import com.tonapps.tonkeeper.extensions.debugToast
 import com.tonapps.tonkeeper.extensions.getWalletBadges
 import com.tonapps.tonkeeper.extensions.toast
+import com.tonapps.tonkeeper.manager.tonconnect.TonConnect
 import com.tonapps.tonkeeper.manager.tonconnect.bridge.model.BridgeError
 import com.tonapps.tonkeeper.ui.base.BaseWalletScreen
 import com.tonapps.tonkeeper.ui.base.ScreenContext
@@ -263,10 +264,13 @@ class TonConnectScreen: BaseWalletScreen<ScreenContext.None>(R.layout.fragment_t
 
     private fun returnToApp() {
         val uri = args.returnUri ?: return
-        if (uri.scheme == "tg" || uri.host == "t.me") {
+        if (!TonConnect.isSafeReturnUri(uri)) {
+            return
+        }
+        if (uri.scheme.equals("tg", ignoreCase = true) || uri.host.equals("t.me", ignoreCase = true)) {
             returnToTg(uri, args.fromPackageName)
         } else {
-            returnToDefault(uri)
+            returnToDefault(uri, args.fromPackageName)
         }
     }
 
@@ -277,13 +281,18 @@ class TonConnectScreen: BaseWalletScreen<ScreenContext.None>(R.layout.fragment_t
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
         } catch (e: Exception) {
-            returnToDefault(uri)
+            if (fromPackageName == null) {
+                returnToDefault(uri, null)
+            } else {
+                navigation?.toast(Localization.unknown_error)
+            }
         }
     }
 
-    private fun returnToDefault(uri: Uri) {
+    private fun returnToDefault(uri: Uri, fromPackageName: String?) {
         try {
             val intent = Intent(Intent.ACTION_VIEW, uri)
+            fromPackageName?.let { intent.`package` = it }
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
         } catch (e: Exception) {
@@ -309,7 +318,9 @@ class TonConnectScreen: BaseWalletScreen<ScreenContext.None>(R.layout.fragment_t
         applyAppTitle(args.app.host)
         applyAppDescription(args.app.name, if (!state.hasWalletPicker) {
             state.wallet.address
-        } else null)
+        } else {
+            null
+        })
 
         if (state.hasWalletPicker) {
             walletPickerView.visibility = View.VISIBLE
