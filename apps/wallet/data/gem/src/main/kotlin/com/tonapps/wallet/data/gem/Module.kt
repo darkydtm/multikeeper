@@ -49,12 +49,15 @@ val gemModule = module {
 
 	single {
 		val context: Context = get()
-		GemBackendEnvironment.forBuild(
+		val environment = GemBackendEnvironment.forBuild(
 			isDebug = Security.isDebuggable(context),
 			debugEnvironment = when (GemWalletEnvironment.get(context)) {
 				GemWalletEnvironment.MAINNET -> GemBackendEnvironment.MAINNET
 				GemWalletEnvironment.TESTNET -> GemBackendEnvironment.TESTNET
 			},
+		)
+		GemBackendConfig(
+			baseUrl = environment.resolvedBaseUrl(GemWalletEnvironment.testnetUrl(context)),
 		)
 	}
 	single<SecurityStorageBox> {
@@ -101,7 +104,7 @@ val gemModule = module {
 		GemBackendClient(
 			httpClient = get(named(GEM_HTTP_CLIENT)),
 			signer = get(),
-			environment = get(),
+			baseUrl = get<GemBackendConfig>().baseUrl,
 		)
 	}
 	single<GemDeviceBackend> { get<GemBackendClient>() }
@@ -124,7 +127,7 @@ val gemModule = module {
 			provider = get<AlienProvider>(),
 			preferences = get(named(GEM_GATEWAY_PREFERENCES)),
 			securePreferences = get(named(GEM_GATEWAY_SECURE_PREFERENCES)),
-			apiUrl = get<GemBackendEnvironment>().baseUrl,
+			apiUrl = get<GemBackendConfig>().baseUrl,
 		)
 	}
 	single<GemGatewayFactory> { GemstoneGatewayFactory(get()) }
@@ -181,7 +184,7 @@ val gemModule = module {
 		GemWebSocketClient(
 			client = get(named(GEM_HTTP_CLIENT)),
 			signer = get(),
-			environment = get(),
+			baseUrl = get<GemBackendConfig>().baseUrl,
 			priceAssets = listOf("bitcoin", "ethereum", "smartchain", "solana"),
 		)
 	}

@@ -93,6 +93,42 @@ class GemBackendTransportTest {
 	}
 
 	@Test
+	fun `mainnet ignores testnet URL override`() {
+		assertEquals(
+			"https://api.gemwallet.com",
+			GemBackendEnvironment.MAINNET.resolvedBaseUrl("https://testnet.example"),
+		)
+	}
+
+	@Test
+	fun `testnet uses configured HTTPS URL`() {
+		assertEquals(
+			"https://testnet.example/api",
+			GemBackendEnvironment.TESTNET.resolvedBaseUrl(" https://testnet.example/api/ "),
+		)
+	}
+
+	@Test(expected = IllegalArgumentException::class)
+	fun `testnet rejects missing URL`() {
+		GemBackendEnvironment.TESTNET.resolvedBaseUrl(null)
+	}
+
+	@Test(expected = IllegalArgumentException::class)
+	fun `testnet rejects insecure URL`() {
+		GemBackendEnvironment.TESTNET.resolvedBaseUrl("http://testnet.example")
+	}
+
+	@Test(expected = IllegalArgumentException::class)
+	fun `testnet rejects URL credentials`() {
+		GemBackendEnvironment.TESTNET.resolvedBaseUrl("https://user:password@testnet.example")
+	}
+
+	@Test(expected = IllegalArgumentException::class)
+	fun `testnet rejects URL query`() {
+		GemBackendEnvironment.TESTNET.resolvedBaseUrl("https://testnet.example?token=secret")
+	}
+
+	@Test
 	fun `transaction id is encoded as one path segment`() {
 		val client = GemBackendClient(
 			httpClient = OkHttpClient(),

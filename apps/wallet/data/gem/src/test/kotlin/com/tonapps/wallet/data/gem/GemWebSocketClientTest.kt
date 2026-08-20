@@ -3,6 +3,7 @@ package com.tonapps.wallet.data.gem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import okhttp3.OkHttpClient
 
 class GemWebSocketClientTest {
 	@Test
@@ -53,5 +54,19 @@ class GemWebSocketClientTest {
 	@Test
 	fun `does not serialize empty price subscription`() {
 		assertEquals(null, GemWebSocketClient.priceSubscriptionMessage(emptyList()))
+	}
+
+	@Test
+	fun `stream URL uses configured backend path`() {
+		val client = GemWebSocketClient(
+			client = OkHttpClient(),
+			signer = GemRequestSigner { _, _, _, _ -> "signed" },
+			baseUrl = "https://testnet.example/api",
+		)
+
+		assertEquals(
+			"wss://testnet.example/api/v2/devices/stream",
+			client.streamUrl(),
+		)
 	}
 }

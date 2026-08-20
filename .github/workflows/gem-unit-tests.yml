@@ -1,0 +1,49 @@
+name: Gem Unit Tests
+
+on:
+  pull_request:
+    paths:
+      - 'apps/wallet/data/gem/**'
+      - 'lib/features/**'
+      - '.github/workflows/gem-unit-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout to git repository
+        uses: actions/checkout@v6
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android aarch64-linux-android armv7-linux-androideabi
+
+      - name: Setup Android NDK
+        shell: bash
+        run: |
+          set +o pipefail
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;29.0.13599879"
+          status=${PIPESTATUS[1]}
+          set -o pipefail
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/29.0.13599879" >> "$GITHUB_ENV"
+          exit "$status"
+
+      - name: Setup cargo-ndk
+        run: cargo install cargo-ndk --version 4.1.2 --locked
+
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5
+
+      - name: Run Gem backend tests
+        run: ./gradlew :apps:wallet:data:gem:testDebugUnitTest --tests com.tonapps.wallet.data.gem.GemBackendTransportTest --tests com.tonapps.wallet.data.gem.GemWebSocketClientTest --no-daemon --no-build-cache --no-configuration-cache

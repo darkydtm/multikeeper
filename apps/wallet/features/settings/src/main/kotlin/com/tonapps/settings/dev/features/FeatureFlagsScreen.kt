@@ -17,6 +17,7 @@ import com.tonapps.core.flags.WalletFeatureKey
 import com.tonapps.core.helper.T
 import ui.components.moon.MoonItemTitle
 import ui.components.moon.MoonSmallItemTitle
+import ui.components.moon.cell.MoonTextFieldCell
 import ui.components.moon.cell.TextCell
 import ui.components.moon.container.MoonScaffold
 import ui.theme.UIKit
@@ -72,6 +73,19 @@ fun FeatureFlagsScreen(
                         },
                         onClick = { expanded = true },
                     )
+
+					var testnetUrl by remember {
+						mutableStateOf(GemWalletEnvironment.testnetUrl(context).orEmpty())
+					}
+					MoonTextFieldCell(
+						value = testnetUrl,
+						onValueChange = {
+							testnetUrl = it
+							GemWalletEnvironment.setTestnetUrl(context, it)
+						},
+						hint = "Gem testnet URL",
+						singleLine = true,
+					)
                 }
 
                 val keys = remember { WalletFeatureKey.entries }

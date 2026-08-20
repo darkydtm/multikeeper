@@ -65,7 +65,7 @@ fun interface GemWebSocketSource {
 class GemWebSocketClient(
 	private val client: OkHttpClient,
 	private val signer: GemRequestSigner,
-	private val environment: GemBackendEnvironment = GemBackendEnvironment.MAINNET,
+	private val baseUrl: String = GemBackendEnvironment.MAINNET.baseUrl,
 	private val priceAssets: List<String> = emptyList(),
 ) : GemWebSocketSource {
 	private val webSocketClient = client.newBuilder()
@@ -92,7 +92,7 @@ class GemWebSocketClient(
 
 	private suspend fun observeSession(onOpen: () -> Unit): Flow<GemWebSocketEvent> = callbackFlow {
 		val request = Request.Builder()
-			.url(environment.streamUrl())
+			.url(streamUrl())
 			.header("Authorization", signer.sign("GET", STREAM_PATH, ByteArray(0), ""))
 			.build()
 		val webSocket = webSocketClient.newWebSocket(request, object : WebSocketListener() {
@@ -121,8 +121,14 @@ class GemWebSocketClient(
 		awaitClose { webSocket.cancel() }
 	}
 
-	private fun GemBackendEnvironment.streamUrl(): String =
-		baseUrl.toHttpUrl().newBuilder().scheme("wss").addPathSegment("v2").addPathSegment("devices").addPathSegment("stream").build().toString()
+	internal fun streamUrl(): String =
+		baseUrl.toHttpUrl().newBuilder()
+			.scheme("wss")
+			.addPathSegment("v2")
+			.addPathSegment("devices")
+			.addPathSegment("stream")
+			.build()
+			.toString()
 
 	companion object {
 		private const val STREAM_PATH = "/v2/devices/stream"

@@ -16,7 +16,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 class GemBackendClient(
 	httpClient: OkHttpClient,
 	signer: GemRequestSigner,
-	private val environment: GemBackendEnvironment = GemBackendEnvironment.MAINNET,
+	private val baseUrl: String = GemBackendEnvironment.MAINNET.baseUrl,
 	private val json: Json = Json {
 		ignoreUnknownKeys = true
 		encodeDefaults = false
@@ -110,7 +110,7 @@ class GemBackendClient(
 	) { it.toModel() }
 
 	private fun url(path: String, vararg query: Pair<String, String>): HttpUrl =
-		environment.baseUrl.toHttpUrl().newBuilder().apply {
+		baseUrl.toHttpUrl().newBuilder().apply {
 			addEncodedPathSegments(path.trimStart('/'))
 			query.forEach { (name, value) -> addQueryParameter(name, value) }
 		}.build()
