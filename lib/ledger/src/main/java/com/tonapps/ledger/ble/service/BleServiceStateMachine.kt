@@ -339,7 +339,7 @@ class BleServiceStateMachine(
                 }
             }
             is BlePairingEvent.None -> {
-                pairing = false
+                pairing = pairingCallbackFlow.isPairing
                 isPaired = false
             }
             is BlePairingEvent.Pairing -> {

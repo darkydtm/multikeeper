@@ -56,7 +56,11 @@ class BlePairingCallbackFlow(
     }
 
     private fun pushEvent(event: BlePairingEvent) {
-        isPairing = event is BlePairingEvent.Pairing
+        isPairing = when (event) {
+            is BlePairingEvent.None -> isPairing
+            is BlePairingEvent.Pairing -> true
+            is BlePairingEvent.Paired -> false
+        }
         onEvent(event)
     }
 }
