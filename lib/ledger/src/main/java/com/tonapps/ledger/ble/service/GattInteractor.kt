@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import com.tonapps.ledger.ble.extension.fromHexStringToBytes
+import com.tonapps.ledger.ble.model.CLIENT_CHARACTERISTIC_CONFIG_UUID
 import com.tonapps.ledger.ble.model.BleDeviceService
 import com.tonapps.log.L
 
@@ -24,7 +25,7 @@ class GattInteractor(val gatt: BluetoothGatt) {
         L.d("Enable Notification")
         val notificationEnabled = gatt.setCharacteristicNotification(deviceService.notifyCharacteristic, true)
         val descriptor = deviceService.notifyCharacteristic.descriptors.firstOrNull {
-            it.uuid == BluetoothGattDescriptor.UUID_CLIENT_CHARACTERISTIC_CONFIG
+            it.uuid == CLIENT_CHARACTERISTIC_CONFIG_UUID
         } ?: return false
         descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
         return notificationEnabled && gatt.writeDescriptor(descriptor)

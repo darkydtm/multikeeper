@@ -10,6 +10,7 @@ import com.tonapps.async.Async
 import com.tonapps.ledger.ble.extension.fromHexStringToBytes
 import com.tonapps.ledger.ble.extension.toHexString
 import com.tonapps.ledger.ble.extension.toUUID
+import com.tonapps.ledger.ble.model.CLIENT_CHARACTERISTIC_CONFIG_UUID
 import com.tonapps.ledger.ble.model.BleDeviceService
 import com.tonapps.ledger.ble.model.BleError
 import com.tonapps.ledger.ble.service.BleService.Companion.MTU_HANDSHAKE_COMMAND
@@ -61,11 +62,16 @@ class BleServiceStateMachine(
     private lateinit var gattInteractor: GattInteractor
 
     internal val bleSender: BleSender by lazy {
-        BleSender(gattInteractor, deviceAddress) { sendId ->
-            pushState(BleServiceState.WaitingResponse(sendId))
-        } {
-            pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
-        }
+        BleSender(
+            gatt = gattInteractor,
+            deviceAddress = deviceAddress,
+            pushWaitingResponseState = { sendId ->
+                pushState(BleServiceState.WaitingResponse(sendId))
+            },
+            pushErrorState = {
+                pushState(BleServiceState.Error(BleError.INTERNAL_STATE))
+            },
+        )
     }
 
     var isPaired = false
@@ -212,7 +218,7 @@ class BleServiceStateMachine(
                 when (currentState) {
                     BleServiceState.WaitingNotificationEnable -> {
                         val descriptorUuid = deviceService.notifyCharacteristic.descriptors.firstOrNull {
-                                it.uuid == android.bluetooth.BluetoothGattDescriptor.UUID_CLIENT_CHARACTERISTIC_CONFIG
+                                it.uuid == CLIENT_CHARACTERISTIC_CONFIG_UUID
                             }?.uuid
                         if (!event.isSuccess || event.descriptorUuid != descriptorUuid) {
                             pushState(BleServiceState.Error(BleError.INTERNAL_STATE))

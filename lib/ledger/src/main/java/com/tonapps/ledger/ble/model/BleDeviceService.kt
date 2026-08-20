@@ -1,8 +1,9 @@
 package com.tonapps.ledger.ble.model
 
 import android.bluetooth.BluetoothGattCharacteristic
-import android.bluetooth.BluetoothGattDescriptor
 import java.util.*
+
+internal val CLIENT_CHARACTERISTIC_CONFIG_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
 data class BleDeviceService(
     val uuid: UUID,
@@ -41,7 +42,7 @@ data class BleDeviceService(
                 "BLE notify characteristic does not support notifications"
             }
             check(notifyCharacteristic.descriptors.any {
-                it.uuid == BluetoothGattDescriptor.UUID_CLIENT_CHARACTERISTIC_CONFIG
+                it.uuid == CLIENT_CHARACTERISTIC_CONFIG_UUID
             }) {
                 "BLE notify characteristic has no client configuration descriptor"
             }
@@ -58,4 +59,5 @@ data class BleDeviceService(
             )
         }
     }
+
 }
