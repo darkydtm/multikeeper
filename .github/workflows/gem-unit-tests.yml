@@ -1,6 +1,9 @@
 name: Gem Unit Tests
 
 on:
+  push:
+    branches:
+      - 'feat/**'
   pull_request:
     paths:
       - 'apps/wallet/data/gem/**'
