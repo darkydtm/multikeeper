@@ -116,7 +116,7 @@ class GemRuntimeCoordinator(
 	}
 
 	private suspend fun refreshSubscriptionsLocked(): Result<Unit> {
-		try {
+		return try {
 			val accounts = walletRegistry.load().flatMap { it.accounts }
 			val result = subscriptionRepository.sync(accounts)
 			if (result.isSuccess) {

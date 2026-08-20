@@ -117,7 +117,8 @@ class GemSendCoordinator(
 	suspend fun waitForOutcome(broadcasted: BroadcastedTransaction): GemSendOutcome {
 		if (broadcasted.transactionIds.isEmpty()) {
 			return GemSendOutcome.Failed(
-				WalletDataSourceException(GemError.BroadcastFailed("Gem gateway returned no transaction IDs")),
+				null,
+				GemError.BroadcastFailed("Gem gateway returned no transaction IDs"),
 			)
 		}
 		if (maxPolls <= 0) {

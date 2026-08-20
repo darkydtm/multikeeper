@@ -83,7 +83,6 @@ class GemWebSocketClient(
 				}.collect { emit(it) }
 			} catch (error: Throwable) {
 				if (!currentCoroutineContext().isActive) throw error
-				disconnected = true
 			}
 			if (connected) attempt = 0
 			delay(reconnectDelay(attempt))
